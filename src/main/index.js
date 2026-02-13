@@ -28,7 +28,7 @@ app.on('window-all-closed', () => app.quit());
 
 ipcMain.handle('config:read', async () => {
   try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
+    const raw = await fs.promises.readFile(CONFIG_PATH, 'utf-8');
     return { ok: true, data: JSON.parse(raw), path: CONFIG_PATH };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -37,7 +37,10 @@ ipcMain.handle('config:read', async () => {
 
 ipcMain.handle('config:write', async (_ev, json) => {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(json, null, 2), 'utf-8');
+    const tmpPath = CONFIG_PATH + '.tmp';
+    const content = JSON.stringify(json, null, 2);
+    await fs.promises.writeFile(tmpPath, content, 'utf-8');
+    await fs.promises.rename(tmpPath, CONFIG_PATH);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -68,11 +71,16 @@ ipcMain.handle('gateway:health', () => runCmd('openclaw gateway health --json'))
 
 ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
   try {
-    if (!workspacePath || !fs.existsSync(workspacePath)) {
+    if (!workspacePath) {
       return { ok: false, error: '工作区路径不存在' };
     }
-    const files = fs.readdirSync(workspacePath)
-      .filter(f => f.endsWith('.md') && fs.statSync(path.join(workspacePath, f)).isFile())
+    try { await fs.promises.access(workspacePath); } catch {
+      return { ok: false, error: '工作区路径不存在' };
+    }
+    const entries = await fs.promises.readdir(workspacePath, { withFileTypes: true });
+    const files = entries
+      .filter(e => e.isFile() && e.name.endsWith('.md'))
+      .map(e => e.name)
       .sort();
     return { ok: true, files };
   } catch (e) {
@@ -80,18 +88,20 @@ ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
   }
 });
 
-ipcMain.handle('workspace:readFile', async (_ev, filePath) => {
+ipcMain.handle('workspace:readFile', async (_ev, workspacePath, fileName) => {
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const filePath = path.join(workspacePath, fileName);
+    const content = await fs.promises.readFile(filePath, 'utf-8');
     return { ok: true, content };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 });
 
-ipcMain.handle('workspace:writeFile', async (_ev, filePath, content) => {
+ipcMain.handle('workspace:writeFile', async (_ev, workspacePath, fileName, content) => {
   try {
-    fs.writeFileSync(filePath, content, 'utf-8');
+    const filePath = path.join(workspacePath, fileName);
+    await fs.promises.writeFile(filePath, content, 'utf-8');
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -152,7 +162,9 @@ ipcMain.handle('models:fetch', async (_ev, { baseUrl, apiKey, api }) => {
           return { ok: true, models: res.body.models.map(m => ({ id: m.id || m, name: m.name || m.display_name || m.id || m })) };
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn(`[models:fetch] ${base}${p} failed:`, e.message);
+    }
   }
   return { ok: false, error: '无法从远程获取模型列表，请检查 URL 和 API Key' };
 });

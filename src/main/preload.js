@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   workspace: {
     listFiles: (wsPath) => ipcRenderer.invoke('workspace:listFiles', wsPath),
-    readFile: (filePath) => ipcRenderer.invoke('workspace:readFile', filePath),
-    writeFile: (filePath, content) => ipcRenderer.invoke('workspace:writeFile', filePath, content),
+    readFile: (wsPath, fileName) => ipcRenderer.invoke('workspace:readFile', wsPath, fileName),
+    writeFile: (wsPath, fileName, content) => ipcRenderer.invoke('workspace:writeFile', wsPath, fileName, content),
   },
 });

@@ -625,6 +625,9 @@ async function gatewayAction(action, btnId) {
   btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px;height:14px"></i> 执行中';
   lucide.createIcons();
 
+  const wasRunning = !document.getElementById('btn-gw-start').disabled;
+  const expectRunning = action === 'start' || action === 'restart';
+
   const res = await window.api.gateway[action]();
   btn.innerHTML = origHtml;
   btn.disabled = false;
@@ -635,7 +638,18 @@ async function gatewayAction(action, btnId) {
   } else {
     toast(`失败: ${res.stderr || '未知错误'}`, 'error');
   }
-  setTimeout(refreshGatewayStatus, 1500);
+
+  // Poll until status changes or timeout (max 10s, interval 1.5s)
+  let attempts = 0;
+  const maxAttempts = 7;
+  const poll = async () => {
+    await refreshGatewayStatus();
+    attempts++;
+    const nowRunning = !document.getElementById('btn-gw-start').disabled;
+    if (nowRunning === expectRunning || attempts >= maxAttempts) return;
+    setTimeout(poll, 1500);
+  };
+  setTimeout(poll, 1000);
 }
 
 document.getElementById('btn-gw-start').addEventListener('click', () => gatewayAction('start', 'btn-gw-start'));
@@ -727,7 +741,7 @@ function renderFileTabs() {
 
 async function selectFile(fileName) {
   const wsPath = getAgentWorkspace(wsState.currentAgent);
-  const res = await window.api.workspace.readFile(wsPath + '\\' + fileName);
+  const res = await window.api.workspace.readFile(wsPath, fileName);
   if (res.ok) {
     wsState.currentFile = fileName;
     wsState.originalContent = res.content;
@@ -739,11 +753,14 @@ async function selectFile(fileName) {
   }
 }
 
+let _previewTimer = null;
+
 function onEditorInput() {
   const content = document.getElementById('ws-editor').value;
   wsState.dirty = content !== wsState.originalContent;
-  updatePreview(content);
   updateSaveBtn();
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(() => updatePreview(content), 200);
 }
 
 function updatePreview(mdText) {
@@ -760,7 +777,7 @@ function updateSaveBtn() {
 async function saveCurrentFile() {
   const wsPath = getAgentWorkspace(wsState.currentAgent);
   const content = document.getElementById('ws-editor').value;
-  const res = await window.api.workspace.writeFile(wsPath + '\\' + wsState.currentFile, content);
+  const res = await window.api.workspace.writeFile(wsPath, wsState.currentFile, content);
   if (res.ok) {
     wsState.originalContent = content;
     wsState.dirty = false;
