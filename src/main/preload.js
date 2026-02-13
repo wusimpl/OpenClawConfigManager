@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   config: {
     read: () => ipcRenderer.invoke('config:read'),
     write: (json) => ipcRenderer.invoke('config:write', json),
+    onChanged: (cb) => ipcRenderer.on('config:changed', cb),
   },
   gateway: {
     status: () => ipcRenderer.invoke('gateway:status'),

@@ -31,6 +31,19 @@ app.whenReady().then(() => {
     });
   });
   createWindow();
+
+  // Watch config file for external changes
+  let watchDebounce = null;
+  fs.watch(path.dirname(CONFIG_PATH), (eventType, filename) => {
+    if (filename === path.basename(CONFIG_PATH)) {
+      clearTimeout(watchDebounce);
+      watchDebounce = setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('config:changed');
+        }
+      }, 500);
+    }
+  });
 });
 app.on('window-all-closed', () => app.quit());
 

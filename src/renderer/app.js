@@ -667,6 +667,12 @@ document.getElementById('btn-gw-refresh').addEventListener('click', refreshGatew
 // ── Init ──
 loadConfig();
 
+// ── Reload on external config change ──
+window.api.config.onChanged(() => {
+  loadConfig();
+  toast('配置文件已被外部修改，已自动刷新');
+});
+
 // ── Workspace Editor ──
 
 let wsState = {
@@ -937,6 +943,7 @@ async function deleteBinding(idx) {
 }
 
 document.getElementById('btn-add-binding').addEventListener('click', () => openBindingEditor(-1));
+document.getElementById('btn-add-channel').addEventListener('click', () => openAddChannelEditor());
 
 // ══════════════════════════════════════════════
 // ── 2. Channels (飞书等) ──
@@ -963,7 +970,10 @@ function renderChannels() {
     html += `<div class="card" style="border-left:4px solid var(--warning)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div style="font-weight:700;font-size:18px;color:var(--text)">${esc(key)}</div>
-        <button class="btn btn-secondary btn-edit-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">编辑</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-edit-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">编辑</button>
+          <button class="btn btn-danger btn-del-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">删除</button>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin-top:16px;font-size:13px">
         <span style="color:var(--text-muted)">App ID</span><span style="font-family:monospace">${esc(ch.appId || '(未设置)')}</span>
@@ -989,6 +999,9 @@ function renderChannels() {
 
   container.querySelectorAll('.btn-edit-channel').forEach(btn => {
     btn.addEventListener('click', () => openChannelEditor(btn.dataset.key));
+  });
+  container.querySelectorAll('.btn-del-channel').forEach(btn => {
+    btn.addEventListener('click', () => deleteChannel(btn.dataset.key));
   });
 }
 
@@ -1082,6 +1095,70 @@ function buildChannelGroupRow(gid, g) {
 function bindGroupRowDelete(container) {
   container.querySelectorAll('.cf-group-del').forEach(btn => {
     btn.onclick = () => btn.closest('.cf-group-row').remove();
+  });
+}
+
+async function deleteChannel(key) {
+  const overlay = showModal(`<h3 style="color:var(--text);text-transform:none">删除 Channel: ${esc(key)}？</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin:12px 0">此操作不可撤销。</p>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="cd-cancel">取消</button>
+      <button class="btn btn-danger" id="cd-confirm">确认删除</button>
+    </div>`);
+  overlay.querySelector('#cd-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#cd-confirm').addEventListener('click', async () => {
+    delete config.channels[key];
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('已删除 Channel'); renderChannels(); }
+    else toast('删除失败: ' + res.error, 'error');
+  });
+}
+
+function openAddChannelEditor() {
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">添加 Channel</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Channel Key (唯一标识，如 feishu, telegram)</label>
+      <input class="form-input" id="nc-key" style="width:100%" placeholder="feishu">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App ID</label>
+      <input class="form-input" id="nc-appid" style="width:100%" placeholder="cli_xxx">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App Secret</label>
+      <input class="form-input" id="nc-secret" style="width:100%" placeholder="secret">
+    </div>
+    <div class="form-group" style="margin-bottom:16px;display:flex;gap:24px">
+      <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nc-enabled" checked> 启用
+      </label>
+      <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="nc-mention"> 需要 @提及
+      </label>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="nc-cancel">取消</button>
+      <button class="btn btn-primary" id="nc-save">添加</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  overlay.querySelector('#nc-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#nc-save').addEventListener('click', async () => {
+    const key = overlay.querySelector('#nc-key').value.trim();
+    if (!key) { toast('Key 不能为空', 'error'); return; }
+    if (config.channels && config.channels[key]) { toast('该 Channel 已存在', 'error'); return; }
+    if (!config.channels) config.channels = {};
+    config.channels[key] = {
+      appId: overlay.querySelector('#nc-appid').value.trim(),
+      appSecret: overlay.querySelector('#nc-secret').value.trim(),
+      enabled: overlay.querySelector('#nc-enabled').checked,
+      requireMention: overlay.querySelector('#nc-mention').checked,
+    };
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('Channel 已添加'); renderChannels(); }
+    else toast('保存失败: ' + res.error, 'error');
   });
 }
 
