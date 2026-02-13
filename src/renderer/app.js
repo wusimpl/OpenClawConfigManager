@@ -3,16 +3,23 @@ let config = null;
 let configPath = '';
 
 // ── Navigation ──
-const allPages = ['config', 'providers', 'workspace', 'gateway'];
+const allPages = ['config', 'providers', 'workspace', 'gateway', 'bindings', 'channels', 'agent-advanced', 'tools-config'];
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     item.classList.add('active');
     const page = item.dataset.page;
-    allPages.forEach(p => document.getElementById('page-' + p).classList.toggle('hidden', p !== page));
+    allPages.forEach(p => {
+      const el = document.getElementById('page-' + p);
+      el.classList.toggle('hidden', p !== page);
+    });
     if (page === 'gateway') refreshGatewayStatus();
     if (page === 'providers') renderProviders();
     if (page === 'workspace') initWorkspacePage();
+    if (page === 'bindings') renderBindings();
+    if (page === 'channels') renderChannels();
+    if (page === 'agent-advanced') renderAgentAdvanced();
+    if (page === 'tools-config') renderToolsConfig();
   });
 });
 
@@ -20,9 +27,15 @@ document.querySelectorAll('.nav-item').forEach(item => {
 function toast(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
-  el.textContent = msg;
+  const icon = type === 'success' ? 'check-circle' : 'alert-circle';
+  el.innerHTML = `<i data-lucide="${icon}" style="width:16px; height:16px; margin-right:8px; vertical-align:middle"></i><span>${msg}</span>`;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
+  lucide.createIcons();
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateX(20px)';
+    setTimeout(() => el.remove(), 400);
+  }, 3000);
 }
 
 // ── Config Page ──
@@ -79,7 +92,7 @@ function renderAgents() {
   const defaultModel = getDefaultModel();
 
   if (agents.length === 0) {
-    container.innerHTML = '<div class="card"><p style="color:#8b949e">没有配置 agent</p></div>';
+    container.innerHTML = '<div class="card"><p style="color:var(--text-muted)">没有配置 agent</p></div>';
     return;
   }
 
@@ -91,9 +104,9 @@ function renderAgents() {
     html += `<div class="agent-row">
       <div>
         <div class="agent-name">${agent.name || agent.id}</div>
-        <div class="agent-id">ID: ${agent.id}${agent.default ? ' (默认)' : ''}</div>
+        <div class="agent-id">ID: ${agent.id}${agent.default ? ' <span style="color:var(--primary)">• 默认</span>' : ''}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;">
+      <div style="display:flex;align-items:center;gap:12px;">
         <select data-agent-id="${agent.id}" data-orig="${isInherited ? '' : (getAgentModel(agent) || '')}" class="agent-model-select">
           <option value=""${isInherited ? ' selected' : ''}>继承默认 (${defaultModel || '无'})</option>`;
 
@@ -103,7 +116,7 @@ function renderAgents() {
     }
 
     html += `</select>
-        <button class="btn btn-dormant btn-save-agent" data-agent-id="${agent.id}" disabled>保存</button>
+        <button class="btn btn-secondary btn-save-agent" data-agent-id="${agent.id}" disabled>保存</button>
       </div>
     </div>`;
   }
@@ -116,7 +129,7 @@ function renderAgents() {
       const btn = container.querySelector(`.btn-save-agent[data-agent-id="${sel.dataset.agentId}"]`);
       const dirty = sel.value !== sel.dataset.orig;
       btn.disabled = !dirty;
-      btn.className = dirty ? 'btn btn-dirty btn-save-agent' : 'btn btn-dormant btn-save-agent';
+      btn.className = dirty ? 'btn btn-dirty btn-save-agent' : 'btn btn-secondary btn-save-agent';
     });
   });
   container.querySelectorAll('.btn-save-agent').forEach(btn => {
@@ -130,7 +143,7 @@ function renderDefaultModel() {
   const defaultModel = getDefaultModel();
 
   let html = '<div class="card"><h3>全局默认模型 (agents.defaults.model.primary)</h3>';
-  html += '<div style="display:flex;align-items:center;gap:10px;margin-top:8px;">';
+  html += '<div style="display:flex;align-items:center;gap:12px;margin-top:8px;">';
   html += `<select id="default-model-select" data-orig="${defaultModel || ''}">`;
   html += `<option value="">不设置</option>`;
   for (const m of allModels) {
@@ -138,7 +151,7 @@ function renderDefaultModel() {
     html += `<option value="${m.value}"${sel}>${m.label}</option>`;
   }
   html += '</select>';
-  html += '<button class="btn btn-dormant" id="btn-save-default" disabled>保存</button>';
+  html += '<button class="btn btn-secondary" id="btn-save-default" disabled>保存</button>';
   html += '</div></div>';
   container.innerHTML = html;
 
@@ -147,7 +160,7 @@ function renderDefaultModel() {
     const btn = document.getElementById('btn-save-default');
     const dirty = sel.value !== sel.dataset.orig;
     btn.disabled = !dirty;
-    btn.className = dirty ? 'btn btn-dirty' : 'btn btn-dormant';
+    btn.className = dirty ? 'btn btn-dirty' : 'btn btn-secondary';
   });
   document.getElementById('btn-save-default').addEventListener('click', saveDefaultModel);
 }
@@ -172,7 +185,7 @@ async function saveAgentModel(agentId) {
     select.dataset.orig = value;
     const btn = document.querySelector(`.btn-save-agent[data-agent-id="${agentId}"]`);
     btn.disabled = true;
-    btn.className = 'btn btn-dormant btn-save-agent';
+    btn.className = 'btn btn-secondary btn-save-agent';
   } else {
     toast('保存失败: ' + res.error, 'error');
   }
@@ -202,7 +215,7 @@ async function saveDefaultModel() {
     sel.dataset.orig = value;
     const btn = document.getElementById('btn-save-default');
     btn.disabled = true;
-    btn.className = 'btn btn-dormant';
+    btn.className = 'btn btn-secondary';
     renderAgents(); // refresh inherited labels
   } else {
     toast('保存失败: ' + res.error, 'error');
@@ -245,6 +258,7 @@ function showModal(html) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `<div class="modal">${html}</div>`;
   document.body.appendChild(overlay);
+  lucide.createIcons();
   // close on overlay click (not modal body)
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   return overlay;
@@ -261,7 +275,7 @@ function renderProviders() {
   const keys = Object.keys(providers);
 
   if (keys.length === 0) {
-    container.innerHTML = '<div class="card"><p style="color:#8b949e">没有配置 provider</p></div>';
+    container.innerHTML = '<div class="card"><p style="color:var(--text-muted)">没有配置 provider</p></div>';
     return;
   }
 
@@ -270,21 +284,24 @@ function renderProviders() {
     const p = providers[key];
     const models = p.models || [];
     const maskedKey = p.apiKey ? p.apiKey.slice(0, 6) + '...' + p.apiKey.slice(-4) : '(未设置)';
-    html += `<div class="provider-card">
-      <div class="provider-header">
+    html += `<div class="card" style="padding: 20px; border-left: 4px solid var(--primary)">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between">
         <div>
-          <div class="provider-name">${key}</div>
-          <div class="provider-url">${p.baseUrl || '(无 URL)'}</div>
-          <div class="provider-api">API: ${p.api || '(未设置)'} &nbsp;|&nbsp; Key: ${maskedKey}</div>
+          <div style="font-weight:700; font-size:18px; color:var(--text)">${key}</div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px">${p.baseUrl || '(无 URL)'}</div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px">
+            <span><b>API:</b> ${p.api || '(未设置)'}</span>
+            <span><b>Key:</b> ${maskedKey}</span>
+          </div>
         </div>
-        <div class="provider-actions">
-          <button class="btn btn-secondary btn-sm btn-edit-provider" data-key="${key}">编辑</button>
-          <button class="btn btn-danger btn-sm btn-delete-provider" data-key="${key}">删除</button>
+        <div style="display:flex; gap:8px">
+          <button class="btn btn-secondary btn-edit-provider" data-key="${key}" style="padding:4px 12px; font-size:12px">编辑</button>
+          <button class="btn btn-danger btn-delete-provider" data-key="${key}" style="padding:4px 12px; font-size:12px">删除</button>
         </div>
       </div>
-      <div class="provider-models">`;
+      <div style="margin-top:16px; display:flex; flex-wrap:wrap">`;
     if (models.length === 0) {
-      html += '<span style="color:#8b949e;font-size:12px">无模型</span>';
+      html += '<span style="color:var(--text-muted);font-size:12px">无模型</span>';
     } else {
       for (const m of models) {
         html += `<span class="provider-model-tag">${m.name || m.id}</span>`;
@@ -307,37 +324,36 @@ function buildProviderFormHtml(key, provider) {
   const isNew = !provider;
   const p = provider || { baseUrl: '', apiKey: '', api: 'anthropic-messages', models: [] };
   const title = isNew ? '添加 Provider' : `编辑 Provider: ${key}`;
-  return `<h3>${title}</h3>
-    <div class="form-group">
-      <label>Provider Key (唯一标识)</label>
-      <input class="form-input" id="pf-key" value="${key || ''}" ${isNew ? '' : 'disabled'} placeholder="如: openai, kiro">
+  return `<h3 style="color:var(--text); text-transform:none; font-size:18px; margin-bottom:20px">${title}</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">Provider Key (唯一标识)</label>
+      <input class="form-input" id="pf-key" style="width:100%" value="${key || ''}" ${isNew ? '' : 'disabled'} placeholder="如: openai, kiro">
     </div>
-    <div class="form-group">
-      <label>Base URL</label>
-      <input class="form-input" id="pf-url" value="${p.baseUrl || ''}" placeholder="https://api.example.com">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">Base URL</label>
+      <input class="form-input" id="pf-url" style="width:100%" value="${p.baseUrl || ''}" placeholder="https://api.example.com">
     </div>
-    <div class="form-group">
-      <label>API Key</label>
-      <input class="form-input" id="pf-apikey" value="${p.apiKey || ''}" placeholder="sk-...">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">API Key</label>
+      <input class="form-input" id="pf-apikey" style="width:100%" value="${p.apiKey || ''}" placeholder="sk-...">
     </div>
-    <div class="form-group">
-      <label>API 类型</label>
-      <select class="form-input" id="pf-api" style="min-width:auto">
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">API 类型</label>
+      <select class="form-input" id="pf-api" style="width:100%">
         <option value="anthropic-messages"${p.api === 'anthropic-messages' ? ' selected' : ''}>anthropic-messages</option>
         <option value="openai-completions"${p.api === 'openai-completions' ? ' selected' : ''}>openai-completions</option>
       </select>
     </div>
-    <div class="form-group">
-      <label>模型列表</label>
-      <div class="fetch-bar">
-        <button class="btn btn-secondary btn-sm" id="pf-fetch">🔄 从 API 获取模型</button>
-        <button class="btn btn-secondary btn-sm" id="pf-add-model">➕ 手动添加</button>
-        <span class="fetch-status" id="pf-fetch-status"></span>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">模型列表</label>
+      <div class="fetch-bar" style="display:flex; gap:8px; margin-bottom:12px">
+        <button class="btn btn-secondary btn-sm" id="pf-fetch" style="font-size:12px; padding:4px 10px"><i data-lucide="refresh-cw" style="width:12px;height:12px"></i> 获取模型</button>
+        <button class="btn btn-secondary btn-sm" id="pf-add-model" style="font-size:12px; padding:4px 10px"><i data-lucide="plus" style="width:12px;height:12px"></i> 手动添加</button>
+        <span class="fetch-status" id="pf-fetch-status" style="font-size:12px"></span>
       </div>
-      <div class="model-row-header"><span>Model ID</span><span>显示名称</span><span></span></div>
-      <div class="model-rows" id="pf-model-rows"></div>
+      <div id="pf-model-rows" style="max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px"></div>
     </div>
-    <div class="btn-group">
+    <div class="btn-group" style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px">
       <button class="btn btn-secondary" id="pf-cancel">取消</button>
       <button class="btn btn-primary" id="pf-save">${isNew ? '添加' : '保存'}</button>
     </div>`;
@@ -346,10 +362,12 @@ function buildProviderFormHtml(key, provider) {
 function createModelRowEl(id, name) {
   const row = document.createElement('div');
   row.className = 'model-row';
-  row.innerHTML = `<input type="text" class="mr-id" value="${id}" placeholder="model-id">
-    <input type="text" class="mr-name" value="${name}" placeholder="显示名称">
-    <button class="btn-rm" title="删除">×</button>`;
-  row.querySelector('.btn-rm').addEventListener('click', () => row.remove());
+  row.style = 'display:flex; gap:8px; margin-bottom:6px; align-items:center';
+  row.innerHTML = `<input type="text" class="form-input mr-id" style="flex:1; padding:4px 8px; font-size:12px" value="${id}" placeholder="model-id">
+    <input type="text" class="form-input mr-name" style="flex:1; padding:4px 8px; font-size:12px" value="${name}" placeholder="显示名称">
+    <button class="btn btn-danger" style="padding:4px; line-height:1" title="删除"><i data-lucide="x" style="width:14px;height:14px"></i></button>`;
+  row.querySelector('.btn-danger').addEventListener('click', () => row.remove());
+  lucide.createIcons();
   return row;
 }
 
@@ -375,7 +393,6 @@ function collectModelsFromEditor(overlay) {
 }
 
 function showModelPicker(remoteModels, rowsContainer) {
-  // collect already-added IDs
   const getExistingIds = () => {
     const ids = new Set();
     rowsContainer.querySelectorAll('.model-row .mr-id').forEach(inp => {
@@ -385,178 +402,117 @@ function showModelPicker(remoteModels, rowsContainer) {
   };
 
   const pickerEl = document.createElement('div');
-  pickerEl.className = 'picker-overlay';
+  pickerEl.className = 'modal-overlay';
+  pickerEl.style.zIndex = '950';
 
   let listHtml = '';
   const existingIds = getExistingIds();
   for (let i = 0; i < remoteModels.length; i++) {
     const m = remoteModels[i];
     const already = existingIds.has(m.id);
-    listHtml += `<div class="picker-item${already ? ' already' : ''}" data-idx="${i}" data-id="${m.id}">
-      <div><span class="pi-name">${m.name || m.id}</span><span class="pi-id">${m.id}</span></div>
+    listHtml += `<div class="picker-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); opacity:${already?0.5:1}">
+      <div>
+        <div style="font-size:13px; font-weight:600; color:var(--text)">${m.name || m.id}</div>
+        <div style="font-size:11px; color:var(--text-muted)">${m.id}</div>
+      </div>
       ${already
-        ? '<span class="pi-added">✓ 已添加</span>'
-        : '<button class="pi-add">➕ 添加</button>'}
+        ? '<span style="color:var(--success); font-size:12px">✓ 已存在</span>'
+        : `<button class="btn btn-primary pi-add" data-idx="${i}" style="padding:2px 10px; font-size:11px">添加</button>`}
     </div>`;
   }
 
-  pickerEl.innerHTML = `<div class="picker">
-    <h3>选择要添加的模型</h3>
-    <input class="picker-search" placeholder="搜索模型..." />
-    <div class="picker-count">共 ${remoteModels.length} 个模型</div>
-    <div class="picker-list">${listHtml}</div>
-    <div class="btn-group">
-      <button class="btn btn-secondary" id="pk-close">关闭</button>
-    </div>
+  pickerEl.innerHTML = `<div class="modal" style="max-width:400px">
+    <h3 style="margin-bottom:16px; font-size:16px; text-transform:none">选择模型</h3>
+    <div style="max-height:300px; overflow-y:auto; margin-bottom:20px">${listHtml}</div>
+    <div style="text-align:right"><button class="btn btn-secondary" id="pk-close">关闭</button></div>
   </div>`;
 
   document.body.appendChild(pickerEl);
 
-  // close
   pickerEl.querySelector('#pk-close').addEventListener('click', () => pickerEl.remove());
-  pickerEl.addEventListener('click', (e) => { if (e.target === pickerEl) pickerEl.remove(); });
-
-  // search filter
-  pickerEl.querySelector('.picker-search').addEventListener('input', (e) => {
-    const q = e.target.value.toLowerCase();
-    pickerEl.querySelectorAll('.picker-item').forEach(item => {
-      const id = item.dataset.id.toLowerCase();
-      const name = item.querySelector('.pi-name').textContent.toLowerCase();
-      item.style.display = (id.includes(q) || name.includes(q)) ? '' : 'none';
-    });
-  });
-
-  // add buttons
   pickerEl.querySelectorAll('.pi-add').forEach(btn => {
     btn.addEventListener('click', () => {
-      const item = btn.closest('.picker-item');
-      const idx = parseInt(item.dataset.idx);
+      const idx = parseInt(btn.dataset.idx);
       const m = remoteModels[idx];
-      // add to editor
       rowsContainer.appendChild(createModelRowEl(m.id, m.name || m.id));
-      // update button to "added"
-      btn.replaceWith(Object.assign(document.createElement('span'), {
-        className: 'pi-added',
-        textContent: '✓ 已添加'
-      }));
-      item.classList.add('already');
+      btn.disabled = true;
+      btn.textContent = '✓';
     });
   });
 }
+
 function openProviderEditor(existingKey) {
   const provider = existingKey ? (config.models?.providers || {})[existingKey] : null;
   const overlay = showModal(buildProviderFormHtml(existingKey || '', provider));
-  // widen modal for model rows
-  overlay.querySelector('.modal').classList.add('modal-wide');
 
-  // populate existing models
   const rowsContainer = overlay.querySelector('#pf-model-rows');
   for (const m of (provider?.models || [])) {
     rowsContainer.appendChild(createModelRowEl(m.id, m.name || m.id));
   }
 
-  // add model manually
   overlay.querySelector('#pf-add-model').addEventListener('click', () => {
     rowsContainer.appendChild(createModelRowEl('', ''));
-    const inputs = rowsContainer.querySelectorAll('.model-row:last-child input');
-    if (inputs.length) inputs[0].focus();
   });
 
-  // fetch models from remote
   overlay.querySelector('#pf-fetch').addEventListener('click', async () => {
     const baseUrl = overlay.querySelector('#pf-url').value.trim();
     const apiKey = overlay.querySelector('#pf-apikey').value.trim();
     const api = overlay.querySelector('#pf-api').value;
     const statusEl = overlay.querySelector('#pf-fetch-status');
-    if (!baseUrl) { toast('请先填写 Base URL', 'error'); return; }
+    if (!baseUrl) { toast('请填写 Base URL', 'error'); return; }
     statusEl.textContent = '获取中...';
-    statusEl.style.color = '#8b949e';
     const fetchBtn = overlay.querySelector('#pf-fetch');
     fetchBtn.disabled = true;
     const res = await window.api.models.fetch({ baseUrl, apiKey, api });
     fetchBtn.disabled = false;
     if (res.ok && res.models.length > 0) {
-      statusEl.textContent = `获取到 ${res.models.length} 个模型`;
-      statusEl.style.color = '#3fb950';
+      statusEl.textContent = `发现 ${res.models.length} 个模型`;
       showModelPicker(res.models, rowsContainer);
     } else {
-      statusEl.textContent = res.error || '未获取到模型';
-      statusEl.style.color = '#f85149';
+      statusEl.textContent = '获取失败';
+      toast(res.error || '未发现模型', 'error');
     }
   });
 
-  // cancel
   overlay.querySelector('#pf-cancel').addEventListener('click', () => closeModal(overlay));
-  // save
   overlay.querySelector('#pf-save').addEventListener('click', async () => {
     const key = overlay.querySelector('#pf-key').value.trim();
     const baseUrl = overlay.querySelector('#pf-url').value.trim();
     const apiKey = overlay.querySelector('#pf-apikey').value.trim();
     const api = overlay.querySelector('#pf-api').value;
     const models = collectModelsFromEditor(overlay);
-    if (!key) { toast('Provider Key 不能为空', 'error'); return; }
-    if (!existingKey && config.models?.providers?.[key]) {
-      toast(`Provider "${key}" \u5df2\u5b58\u5728`, 'error');
-      return;
-    }
+    if (!key) { toast('Key 不能为空', 'error'); return; }
     if (!config.models) config.models = {};
     if (!config.models.providers) config.models.providers = {};
     config.models.providers[key] = { baseUrl, apiKey, api, models };
     const res = await window.api.config.write(config);
     closeModal(overlay);
     if (res.ok) {
-      toast(existingKey ? `Provider "${key}" 已更新` : `Provider "${key}" 已添加`);
+      toast('保存成功');
       renderProviders();
       renderAgents();
-      renderDefaultModel();
-    } else {
-      toast('保存失败: ' + res.error, 'error');
     }
   });
 }
 
 function deleteProvider(providerKey) {
   const affected = findAffectedByProvider(providerKey);
-
-  if (affected.length === 0) {
-    // no dependencies, simple confirm
-    const overlay = showModal(`
-      <h3>删除 Provider</h3>
-      <p>确定要删除 Provider <strong style="color:#f0883e">${providerKey}</strong> 吗？</p>
-      <div class="btn-group">
-        <button class="btn btn-secondary" id="dc-cancel">取消</button>
-        <button class="btn btn-danger" id="dc-confirm">删除</button>
-      </div>`);
-    overlay.querySelector('#dc-cancel').addEventListener('click', () => closeModal(overlay));
-    overlay.querySelector('#dc-confirm').addEventListener('click', () => {
-      closeModal(overlay);
-      executeDeleteProvider(providerKey, []);
-    });
-    return;
+  let html = `<h3>删除 Provider: ${providerKey}</h3>
+    <p style="font-size:13px; color:var(--text-muted); margin:12px 0">确定要删除吗？</p>`;
+  
+  if (affected.length > 0) {
+    html += `<div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:12px; margin-bottom:20px">
+      <div style="font-size:12px; color:var(--danger); font-weight:700; margin-bottom:8px">以下配置将被清除：</div>`;
+    for (const a of affected) html += `<div style="font-size:11px; color:var(--danger)">• ${a.label}</div>`;
+    html += `</div>`;
   }
 
-  // has dependencies — show affected list and require confirmation
-  let affectedHtml = '<div class="affected-list">';
-  for (const a of affected) {
-    if (a.type === 'default') {
-      affectedHtml += `<div class="affected-item">🔗 ${a.label}: ${a.model}</div>`;
-    } else if (a.type === 'agent') {
-      affectedHtml += `<div class="affected-item">🤖 Agent "${a.label}" (${a.id}): ${a.model}</div>`;
-    } else {
-      affectedHtml += `<div class="affected-item">📋 ${a.label}</div>`;
-    }
-  }
-  affectedHtml += '</div>';
+  html += `<div class="btn-group" style="display:flex; justify-content:flex-end; gap:10px">
+    <button class="btn btn-secondary" id="dc-cancel">取消</button>
+    <button class="btn btn-danger" id="dc-confirm">确认删除</button>
+  </div>`;
 
-  const overlay = showModal(`
-    <h3>⚠️ 删除 Provider: ${providerKey}</h3>
-    <p>以下配置正在使用该 Provider 的模型，删除后这些引用将被清除：</p>
-    ${affectedHtml}
-    <p style="color:#f85149">此操作不可撤销，确定继续？</p>
-    <div class="btn-group">
-      <button class="btn btn-secondary" id="dc-cancel">取消</button>
-      <button class="btn btn-danger" id="dc-confirm">确认删除并清除引用</button>
-    </div>`);
+  const overlay = showModal(html);
   overlay.querySelector('#dc-cancel').addEventListener('click', () => closeModal(overlay));
   overlay.querySelector('#dc-confirm').addEventListener('click', () => {
     closeModal(overlay);
@@ -587,21 +543,13 @@ async function executeDeleteProvider(providerKey, affected) {
       }
     }
   }
-
-  // delete the provider
   delete config.models.providers[providerKey];
-  if (Object.keys(config.models.providers).length === 0) {
-    delete config.models.providers;
-  }
-
   const res = await window.api.config.write(config);
   if (res.ok) {
-    toast(`Provider "${providerKey}" 已删除` + (affected.length ? '，相关引用已清除' : ''));
+    toast(`已删除 ${providerKey}`);
     renderProviders();
     renderAgents();
     renderDefaultModel();
-  } else {
-    toast('删除失败: ' + res.error, 'error');
   }
 }
 
@@ -626,15 +574,13 @@ async function refreshGatewayStatus() {
 
   if (statusRes.ok && statusData) {
     running = true;
-    statusHtml = `<span class="badge badge-green">运行中</span>`;
-    if (statusData.version) statusHtml += `<div class="gw-info" style="margin-top:12px">
-      <span class="gw-label">版本</span><span>${statusData.version}</span>
-    </div>`;
+    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
+    if (statusData.version) statusHtml += `<div style="margin-top:16px; font-size:13px"><span style="color:var(--text-muted)">版本:</span> ${statusData.version}</div>`;
   } else if (statusRes.stdout?.includes('running')) {
     running = true;
-    statusHtml = `<span class="badge badge-green">运行中</span>`;
+    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
   } else {
-    statusHtml = `<span class="badge badge-red">已停止</span>`;
+    statusHtml = `<span class="badge badge-red"><i data-lucide="x" style="width:12px;height:12px"></i> 已停止</span>`;
   }
 
   if (healthRes.ok) {
@@ -642,24 +588,21 @@ async function refreshGatewayStatus() {
     try { healthData = JSON.parse(healthRes.stdout); } catch {}
     if (healthData) {
       running = true;
-      statusHtml = `<span class="badge badge-green">运行中</span>`;
-      statusHtml += `<div class="gw-info" style="margin-top:12px">`;
-      if (healthData.version) statusHtml += `<span class="gw-label">版本</span><span>${healthData.version}</span>`;
-      if (healthData.uptime) statusHtml += `<span class="gw-label">运行时间</span><span>${healthData.uptime}</span>`;
-      if (healthData.agents) statusHtml += `<span class="gw-label">Agents</span><span>${healthData.agents}</span>`;
-      if (healthData.sessions) statusHtml += `<span class="gw-label">Sessions</span><span>${healthData.sessions}</span>`;
+      statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
+      statusHtml += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:16px; font-size:13px">`;
+      if (healthData.uptime) statusHtml += `<div><span style="color:var(--text-muted)">运行时间:</span> ${healthData.uptime}</div>`;
+      if (healthData.agents) statusHtml += `<div><span style="color:var(--text-muted)">Agents:</span> ${healthData.agents}</div>`;
       statusHtml += `</div>`;
     }
   }
 
   el.innerHTML = statusHtml;
+  lucide.createIcons();
 
-  // Update button states
   document.getElementById('btn-gw-start').disabled = running;
   document.getElementById('btn-gw-stop').disabled = !running;
   document.getElementById('btn-gw-restart').disabled = !running;
 
-  // Gateway config info
   renderGatewayConfig();
 }
 
@@ -667,33 +610,31 @@ function renderGatewayConfig() {
   const el = document.getElementById('gw-config-info');
   if (!config) { el.textContent = '配置未加载'; return; }
   const gw = config.gateway || {};
-  el.innerHTML = `<div class="gw-info">
-    <span class="gw-label">端口</span><span>${gw.port || 18789}</span>
-    <span class="gw-label">模式</span><span>${gw.mode || '(未设置)'}</span>
-    <span class="gw-label">绑定</span><span>${gw.bind || 'loopback'}</span>
-    <span class="gw-label">认证模式</span><span>${gw.auth?.mode || '(未设置)'}</span>
-    <span class="gw-label">Tailscale</span><span>${gw.tailscale?.mode || 'off'}</span>
+  el.innerHTML = `<div style="display:grid; grid-template-columns: 100px 1fr; gap:8px; font-size:13px">
+    <span style="color:var(--text-muted)">监听端口</span><span>${gw.port || 18789}</span>
+    <span style="color:var(--text-muted)">工作模式</span><span>${gw.mode || '(未设置)'}</span>
+    <span style="color:var(--text-muted)">网络绑定</span><span>${gw.bind || 'loopback'}</span>
+    <span style="color:var(--text-muted)">认证模式</span><span>${gw.auth?.mode || 'none'}</span>
   </div>`;
 }
 
 async function gatewayAction(action, btnId) {
   const btn = document.getElementById(btnId);
-  const origText = btn.textContent;
+  const origHtml = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = '执行中...';
+  btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px;height:14px"></i> 执行中';
+  lucide.createIcons();
 
   const res = await window.api.gateway[action]();
-
-  btn.textContent = origText;
+  btn.innerHTML = origHtml;
   btn.disabled = false;
+  lucide.createIcons();
 
   if (res.ok) {
-    toast(`网关${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}成功`);
+    toast(`操作成功`);
   } else {
-    toast(`操作失败: ${res.stderr || res.stdout || '未知错误'}`, 'error');
+    toast(`失败: ${res.stderr || '未知错误'}`, 'error');
   }
-
-  // Wait a moment then refresh
   setTimeout(refreshGatewayStatus, 1500);
 }
 
@@ -719,96 +660,55 @@ let wsState = {
 function getAgentWorkspace(agentId) {
   const agents = config?.agents?.list || [];
   const agent = agents.find(a => a.id === agentId);
-  if (agent?.workspace) return agent.workspace;
-  // default workspace
-  return config?.agents?.defaults?.workspace || null;
+  return agent?.workspace || config?.agents?.defaults?.workspace || null;
 }
 
 function initWorkspacePage() {
   if (!config) return;
   const select = document.getElementById('ws-agent-select');
-  const agents = config.agents?.list || [];
-
-  // only rebuild options if agent list changed
   if (!wsState.initialized) {
+    const agents = config.agents?.list || [];
     select.innerHTML = '<option value="">选择 Agent...</option>';
     for (const agent of agents) {
       const opt = document.createElement('option');
       opt.value = agent.id;
-      opt.textContent = `${agent.name || agent.id}`;
+      opt.textContent = agent.name || agent.id;
       select.appendChild(opt);
     }
 
     select.addEventListener('change', () => {
-      if (wsState.dirty && !confirm('当前文件有未保存的修改，确定切换？')) {
+      if (wsState.dirty && !confirm('变更未保存，确定切换？')) {
         select.value = wsState.currentAgent || '';
         return;
       }
       wsState.currentAgent = select.value || null;
       wsState.currentFile = null;
       wsState.dirty = false;
-      if (wsState.currentAgent) {
-        loadAgentFiles(wsState.currentAgent);
-      } else {
-        clearEditor();
-      }
+      if (wsState.currentAgent) loadAgentFiles(wsState.currentAgent);
+      else clearEditor();
     });
 
     const editor = document.getElementById('ws-editor');
     editor.addEventListener('input', onEditorInput);
-    editor.addEventListener('keydown', (e) => {
-      // Tab inserts 2 spaces
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
-        editor.selectionStart = editor.selectionEnd = start + 2;
-        onEditorInput();
-      }
-      // Ctrl+S saves
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        if (wsState.dirty) saveCurrentFile();
-      }
-    });
     document.getElementById('ws-btn-save').addEventListener('click', saveCurrentFile);
-
     wsState.initialized = true;
-  }
-
-  // restore selection if already picked
-  if (wsState.currentAgent) {
-    select.value = wsState.currentAgent;
   }
 }
 
 async function loadAgentFiles(agentId) {
   const wsPath = getAgentWorkspace(agentId);
   if (!wsPath) {
-    document.getElementById('ws-file-tabs').innerHTML = '<span style="color:#f85149;font-size:12px">该 Agent 未配置 workspace 路径</span>';
-    clearEditor();
+    document.getElementById('ws-file-tabs').innerHTML = '<span style="color:var(--danger);font-size:12px">未配置 Workspace</span>';
     return;
   }
-
   const res = await window.api.workspace.listFiles(wsPath);
   if (!res.ok) {
-    document.getElementById('ws-file-tabs').innerHTML = `<span style="color:#f85149;font-size:12px">${res.error}</span>`;
-    clearEditor();
+    document.getElementById('ws-file-tabs').innerHTML = `<span style="color:var(--danger);font-size:12px">读取失败</span>`;
     return;
   }
-
   wsState.files = res.files;
   renderFileTabs();
-
-  // auto-select first identity-like file
-  const priority = ['IDENTITY.md', 'SOUL.md'];
-  const autoFile = priority.find(f => wsState.files.includes(f)) || wsState.files[0];
-  if (autoFile) {
-    selectFile(autoFile);
-  } else {
-    clearEditor();
-  }
+  if (wsState.files.length) selectFile(wsState.files[0]);
 }
 
 function renderFileTabs() {
@@ -819,9 +719,7 @@ function renderFileTabs() {
     tab.className = 'ws-file-tab' + (file === wsState.currentFile ? ' active' : '');
     tab.textContent = file;
     tab.addEventListener('click', () => {
-      if (file === wsState.currentFile) return;
-      if (wsState.dirty && !confirm('当前文件有未保存的修改，确定切换？')) return;
-      selectFile(file);
+      if (file !== wsState.currentFile) selectFile(file);
     });
     container.appendChild(tab);
   }
@@ -829,21 +727,16 @@ function renderFileTabs() {
 
 async function selectFile(fileName) {
   const wsPath = getAgentWorkspace(wsState.currentAgent);
-  const filePath = wsPath + '\\' + fileName;
-  const res = await window.api.workspace.readFile(filePath);
-  if (!res.ok) {
-    toast('读取失败: ' + res.error, 'error');
-    return;
+  const res = await window.api.workspace.readFile(wsPath + '\\' + fileName);
+  if (res.ok) {
+    wsState.currentFile = fileName;
+    wsState.originalContent = res.content;
+    wsState.dirty = false;
+    document.getElementById('ws-editor').value = res.content;
+    updatePreview(res.content);
+    updateSaveBtn();
+    renderFileTabs();
   }
-
-  wsState.currentFile = fileName;
-  wsState.originalContent = res.content;
-  wsState.dirty = false;
-
-  document.getElementById('ws-editor').value = res.content;
-  updatePreview(res.content);
-  updateSaveBtn();
-  renderFileTabs();
 }
 
 function onEditorInput() {
@@ -855,41 +748,486 @@ function onEditorInput() {
 
 function updatePreview(mdText) {
   const preview = document.getElementById('ws-preview');
-  if (!mdText && !wsState.currentFile) {
-    preview.innerHTML = '<div class="ws-preview-placeholder">选择一个 Agent 和文件开始编辑</div>';
-    return;
-  }
   preview.innerHTML = marked.parse(mdText || '');
 }
 
 function updateSaveBtn() {
   const btn = document.getElementById('ws-btn-save');
   btn.disabled = !wsState.dirty;
-  btn.className = wsState.dirty ? 'btn btn-dirty' : 'btn btn-dormant';
+  btn.className = wsState.dirty ? 'btn btn-dirty' : 'btn btn-secondary';
 }
 
 async function saveCurrentFile() {
-  if (!wsState.currentAgent || !wsState.currentFile) return;
   const wsPath = getAgentWorkspace(wsState.currentAgent);
-  const filePath = wsPath + '\\' + wsState.currentFile;
   const content = document.getElementById('ws-editor').value;
-
-  const res = await window.api.workspace.writeFile(filePath, content);
+  const res = await window.api.workspace.writeFile(wsPath + '\\' + wsState.currentFile, content);
   if (res.ok) {
     wsState.originalContent = content;
     wsState.dirty = false;
     updateSaveBtn();
-    toast(`${wsState.currentFile} 已保存`);
-  } else {
-    toast('保存失败: ' + res.error, 'error');
+    toast('保存成功');
   }
 }
 
 function clearEditor() {
   wsState.currentFile = null;
-  wsState.originalContent = '';
-  wsState.dirty = false;
   document.getElementById('ws-editor').value = '';
-  document.getElementById('ws-preview').innerHTML = '<div class="ws-preview-placeholder">选择一个 Agent 和文件开始编辑</div>';
+  document.getElementById('ws-preview').innerHTML = '';
   updateSaveBtn();
 }
+
+// ══════════════════════════════════════════════
+// ── 1. Bindings (路由绑定) ──
+// ══════════════════════════════════════════════
+
+function renderBindings() {
+  if (!config) return;
+  const list = config.bindings || [];
+  const container = document.getElementById('bindings-list');
+  const agents = config.agents?.list || [];
+
+  if (list.length === 0) {
+    container.innerHTML = '<div class="card"><p style="color:var(--text-muted)">暂无绑定规则</p></div>';
+    return;
+  }
+
+  let html = '';
+  list.forEach((b, i) => {
+    const agentName = agents.find(a => a.id === b.agentId)?.name || b.agentId;
+    const ch = b.match?.channel || '(任意)';
+    const peerKind = b.match?.peer?.kind || '(任意)';
+    const peerId = b.match?.peer?.id || '(任意)';
+    html += `<div class="card" style="border-left:4px solid var(--primary)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-weight:700;font-size:16px;color:var(--text)">规则 #${i + 1}</div>
+          <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 12px;margin-top:12px;font-size:13px">
+            <span style="color:var(--text-muted)">Agent</span><span style="color:var(--primary);font-weight:600">${agentName}</span>
+            <span style="color:var(--text-muted)">Channel</span><span>${ch}</span>
+            <span style="color:var(--text-muted)">Peer 类型</span><span>${peerKind}</span>
+            <span style="color:var(--text-muted)">Peer ID</span><span style="font-family:monospace;font-size:12px">${peerId}</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-edit-binding" data-idx="${i}" style="padding:4px 12px;font-size:12px">编辑</button>
+          <button class="btn btn-danger btn-del-binding" data-idx="${i}" style="padding:4px 12px;font-size:12px">删除</button>
+        </div>
+      </div>
+    </div>`;
+  });
+  container.innerHTML = html;
+
+  container.querySelectorAll('.btn-edit-binding').forEach(btn => {
+    btn.addEventListener('click', () => openBindingEditor(parseInt(btn.dataset.idx)));
+  });
+  container.querySelectorAll('.btn-del-binding').forEach(btn => {
+    btn.addEventListener('click', () => deleteBinding(parseInt(btn.dataset.idx)));
+  });
+}
+
+function openBindingEditor(idx) {
+  const isNew = idx === -1;
+  const binding = isNew ? { agentId: '', match: { channel: '', peer: { kind: '', id: '' } } } : JSON.parse(JSON.stringify(config.bindings[idx]));
+  const agents = config.agents?.list || [];
+  const channels = Object.keys(config.channels || {});
+
+  let agentOpts = '<option value="">选择 Agent...</option>';
+  for (const a of agents) {
+    const sel = binding.agentId === a.id ? ' selected' : '';
+    agentOpts += `<option value="${a.id}"${sel}>${a.name || a.id}</option>`;
+  }
+
+  let chOpts = '<option value="">任意 Channel</option>';
+  for (const ch of channels) {
+    const sel = binding.match?.channel === ch ? ' selected' : '';
+    chOpts += `<option value="${ch}"${sel}>${ch}</option>`;
+  }
+
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">${isNew ? '添加绑定' : '编辑绑定'}</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Agent</label>
+      <select class="form-input" id="bf-agent" style="width:100%">${agentOpts}</select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Channel</label>
+      <select class="form-input" id="bf-channel" style="width:100%">${chOpts}</select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Peer Kind (留空=匹配所有)</label>
+      <select class="form-input" id="bf-peer-kind" style="width:100%">
+        <option value=""${!binding.match?.peer?.kind ? ' selected' : ''}>任意</option>
+        <option value="group"${binding.match?.peer?.kind === 'group' ? ' selected' : ''}>group</option>
+        <option value="private"${binding.match?.peer?.kind === 'private' ? ' selected' : ''}>private</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Peer ID (留空=匹配所有)</label>
+      <input class="form-input" id="bf-peer-id" style="width:100%" value="${binding.match?.peer?.id || ''}" placeholder="如: oc_xxxx">
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="bf-cancel">取消</button>
+      <button class="btn btn-primary" id="bf-save">${isNew ? '添加' : '保存'}</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  overlay.querySelector('#bf-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#bf-save').addEventListener('click', async () => {
+    const agentId = overlay.querySelector('#bf-agent').value;
+    if (!agentId) { toast('请选择 Agent', 'error'); return; }
+    const match = {};
+    const ch = overlay.querySelector('#bf-channel').value;
+    if (ch) match.channel = ch;
+    const kind = overlay.querySelector('#bf-peer-kind').value;
+    const id = overlay.querySelector('#bf-peer-id').value.trim();
+    if (kind || id) {
+      match.peer = {};
+      if (kind) match.peer.kind = kind;
+      if (id) match.peer.id = id;
+    }
+    const newBinding = { agentId, match };
+    if (!config.bindings) config.bindings = [];
+    if (isNew) config.bindings.push(newBinding);
+    else config.bindings[idx] = newBinding;
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('绑定已保存'); renderBindings(); }
+    else toast('保存失败: ' + res.error, 'error');
+  });
+}
+
+async function deleteBinding(idx) {
+  const overlay = showModal(`<h3 style="color:var(--text);text-transform:none">删除绑定规则 #${idx + 1}？</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin:12px 0">此操作不可撤销。</p>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="bd-cancel">取消</button>
+      <button class="btn btn-danger" id="bd-confirm">确认删除</button>
+    </div>`);
+  overlay.querySelector('#bd-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#bd-confirm').addEventListener('click', async () => {
+    config.bindings.splice(idx, 1);
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('已删除'); renderBindings(); }
+    else toast('删除失败', 'error');
+  });
+}
+
+document.getElementById('btn-add-binding').addEventListener('click', () => openBindingEditor(-1));
+
+// ══════════════════════════════════════════════
+// ── 2. Channels (飞书等) ──
+// ══════════════════════════════════════════════
+
+function renderChannels() {
+  if (!config) return;
+  const container = document.getElementById('channels-editor');
+  const channels = config.channels || {};
+  const keys = Object.keys(channels);
+
+  if (keys.length === 0) {
+    container.innerHTML = '<div class="card"><p style="color:var(--text-muted)">暂无 Channel 配置</p></div>';
+    return;
+  }
+
+  let html = '';
+  for (const key of keys) {
+    const ch = channels[key];
+    const maskedSecret = ch.appSecret ? ch.appSecret.slice(0, 4) + '...' + ch.appSecret.slice(-4) : '(未设置)';
+    const groups = ch.groups || {};
+    const groupKeys = Object.keys(groups);
+
+    html += `<div class="card" style="border-left:4px solid var(--warning)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="font-weight:700;font-size:18px;color:var(--text)">${key}</div>
+        <button class="btn btn-secondary btn-edit-channel" data-key="${key}" style="padding:4px 12px;font-size:12px">编辑</button>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin-top:16px;font-size:13px">
+        <span style="color:var(--text-muted)">App ID</span><span style="font-family:monospace">${ch.appId || '(未设置)'}</span>
+        <span style="color:var(--text-muted)">App Secret</span><span style="font-family:monospace">${maskedSecret}</span>
+        <span style="color:var(--text-muted)">启用</span><span>${ch.enabled !== false ? '<span style="color:var(--success)">是</span>' : '<span style="color:var(--danger)">否</span>'}</span>
+        <span style="color:var(--text-muted)">需要 @</span><span>${ch.requireMention ? '是' : '否'}</span>
+      </div>`;
+
+    if (groupKeys.length > 0) {
+      html += `<div style="margin-top:16px"><div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-bottom:8px">群组覆盖配置 (${groupKeys.length})</div>`;
+      for (const gid of groupKeys) {
+        const g = groups[gid];
+        html += `<div style="background:#09090b;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-family:monospace;color:var(--text-muted)">${gid}</span>
+          <span>requireMention: <b>${g.requireMention !== undefined ? String(g.requireMention) : '继承'}</b></span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.btn-edit-channel').forEach(btn => {
+    btn.addEventListener('click', () => openChannelEditor(btn.dataset.key));
+  });
+}
+
+function openChannelEditor(key) {
+  const ch = JSON.parse(JSON.stringify(config.channels[key]));
+  const groups = ch.groups || {};
+  const groupKeys = Object.keys(groups);
+
+  let groupRowsHtml = '';
+  for (const gid of groupKeys) {
+    groupRowsHtml += buildChannelGroupRow(gid, groups[gid]);
+  }
+
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">编辑 Channel: ${key}</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App ID</label>
+      <input class="form-input" id="cf-appid" style="width:100%" value="${ch.appId || ''}">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App Secret</label>
+      <input class="form-input" id="cf-secret" style="width:100%" value="${ch.appSecret || ''}">
+    </div>
+    <div class="form-group" style="margin-bottom:16px;display:flex;gap:24px">
+      <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="cf-enabled" ${ch.enabled !== false ? 'checked' : ''}> 启用
+      </label>
+      <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="cf-mention" ${ch.requireMention ? 'checked' : ''}> 需要 @提及
+      </label>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted);margin-bottom:6px">
+        <span>群组覆盖配置</span>
+        <button class="btn btn-secondary" id="cf-add-group" style="padding:2px 10px;font-size:11px"><i data-lucide="plus" style="width:12px;height:12px"></i> 添加群组</button>
+      </label>
+      <div id="cf-group-rows">${groupRowsHtml}</div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="cf-cancel">取消</button>
+      <button class="btn btn-primary" id="cf-save">保存</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  // widen modal for groups
+  overlay.querySelector('.modal').style.maxWidth = '560px';
+  lucide.createIcons();
+
+  overlay.querySelector('#cf-add-group').addEventListener('click', () => {
+    const container = overlay.querySelector('#cf-group-rows');
+    container.insertAdjacentHTML('beforeend', buildChannelGroupRow('', { requireMention: false }));
+    bindGroupRowDelete(container);
+  });
+  bindGroupRowDelete(overlay.querySelector('#cf-group-rows'));
+
+  overlay.querySelector('#cf-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#cf-save').addEventListener('click', async () => {
+    const updated = {
+      appId: overlay.querySelector('#cf-appid').value.trim(),
+      appSecret: overlay.querySelector('#cf-secret').value.trim(),
+      enabled: overlay.querySelector('#cf-enabled').checked,
+      requireMention: overlay.querySelector('#cf-mention').checked,
+    };
+    const groupRows = overlay.querySelectorAll('.cf-group-row');
+    if (groupRows.length > 0) {
+      updated.groups = {};
+      groupRows.forEach(row => {
+        const gid = row.querySelector('.cf-gid').value.trim();
+        if (gid) {
+          updated.groups[gid] = { requireMention: row.querySelector('.cf-grm').checked };
+        }
+      });
+    }
+    config.channels[key] = updated;
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('Channel 已保存'); renderChannels(); }
+    else toast('保存失败: ' + res.error, 'error');
+  });
+}
+
+function buildChannelGroupRow(gid, g) {
+  return `<div class="cf-group-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px;background:#09090b;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+    <input class="form-input cf-gid" style="flex:1;padding:4px 8px;font-size:12px;font-family:monospace" value="${gid}" placeholder="群组 ID (oc_xxx)">
+    <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap">
+      <input type="checkbox" class="cf-grm" ${g.requireMention ? 'checked' : ''}> @提及
+    </label>
+    <button class="btn btn-danger cf-group-del" style="padding:2px 6px;font-size:11px">删除</button>
+  </div>`;
+}
+
+function bindGroupRowDelete(container) {
+  container.querySelectorAll('.cf-group-del').forEach(btn => {
+    btn.onclick = () => btn.closest('.cf-group-row').remove();
+  });
+}
+
+// ══════════════════════════════════════════════
+// ── 3. Agent 高级配置 ──
+// ══════════════════════════════════════════════
+
+function renderAgentAdvanced() {
+  if (!config) return;
+  const container = document.getElementById('agent-advanced-editor');
+  const defaults = config.agents?.defaults || {};
+  const agents = config.agents?.list || [];
+
+  let html = '';
+
+  // --- defaults section ---
+  html += `<div class="card" style="border-left:4px solid var(--success)">
+    <h3>全局默认参数 (agents.defaults)</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Compaction Mode</label>
+        <select class="form-input" id="aa-compaction" style="width:100%">
+          <option value="safeguard"${defaults.compaction?.mode === 'safeguard' ? ' selected' : ''}>safeguard</option>
+          <option value="auto"${defaults.compaction?.mode === 'auto' ? ' selected' : ''}>auto</option>
+          <option value="off"${defaults.compaction?.mode === 'off' ? ' selected' : ''}>off</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Max Concurrent</label>
+        <input class="form-input" id="aa-maxconcurrent" type="number" min="1" max="32" style="width:100%" value="${defaults.maxConcurrent || 4}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Subagents Max Concurrent</label>
+        <input class="form-input" id="aa-sub-maxconcurrent" type="number" min="1" max="32" style="width:100%" value="${defaults.subagents?.maxConcurrent || 8}">
+      </div>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button class="btn btn-secondary" id="aa-save-defaults">保存默认参数</button>
+    </div>
+  </div>`;
+
+  // --- per-agent advanced ---
+  for (const agent of agents) {
+    const gc = agent.groupChat || {};
+    const patterns = (gc.mentionPatterns || []).join(', ');
+    html += `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+          <span style="font-weight:700;font-size:16px;color:var(--text)">${agent.name || agent.id}</span>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:8px">${agent.id}</span>
+        </div>
+        <button class="btn btn-secondary btn-edit-agent-adv" data-id="${agent.id}" style="padding:4px 12px;font-size:12px">编辑</button>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
+        <span style="color:var(--text-muted)">触发词</span><span>${patterns || '<span style="color:var(--text-muted)">(无)</span>'}</span>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = html;
+
+  document.getElementById('aa-save-defaults').addEventListener('click', saveAgentDefaults);
+  container.querySelectorAll('.btn-edit-agent-adv').forEach(btn => {
+    btn.addEventListener('click', () => openAgentAdvEditor(btn.dataset.id));
+  });
+}
+
+async function saveAgentDefaults() {
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+  const d = config.agents.defaults;
+
+  d.compaction = { mode: document.getElementById('aa-compaction').value };
+  d.maxConcurrent = parseInt(document.getElementById('aa-maxconcurrent').value) || 4;
+  if (!d.subagents) d.subagents = {};
+  d.subagents.maxConcurrent = parseInt(document.getElementById('aa-sub-maxconcurrent').value) || 8;
+
+  const res = await window.api.config.write(config);
+  if (res.ok) {
+    toast('默认参数已保存');
+    const btn = document.getElementById('aa-save-defaults');
+    btn.className = 'btn btn-secondary';
+  } else toast('保存失败: ' + res.error, 'error');
+}
+
+function openAgentAdvEditor(agentId) {
+  const agent = (config.agents?.list || []).find(a => a.id === agentId);
+  if (!agent) return;
+  const gc = agent.groupChat || {};
+  const patterns = (gc.mentionPatterns || []).join('\n');
+
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">Agent 高级配置: ${agent.name || agent.id}</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">触发词 / Mention Patterns (每行一个，支持正则)</label>
+      <textarea class="form-input" id="aae-patterns" style="width:100%;height:100px;font-family:monospace;font-size:13px;resize:vertical">${patterns}</textarea>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="aae-cancel">取消</button>
+      <button class="btn btn-primary" id="aae-save">保存</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  overlay.querySelector('#aae-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#aae-save').addEventListener('click', async () => {
+    const raw = overlay.querySelector('#aae-patterns').value;
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length > 0) {
+      if (!agent.groupChat) agent.groupChat = {};
+      agent.groupChat.mentionPatterns = lines;
+    } else {
+      delete agent.groupChat;
+    }
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+    if (res.ok) { toast('Agent 配置已保存'); renderAgentAdvanced(); }
+    else toast('保存失败: ' + res.error, 'error');
+  });
+}
+
+// ══════════════════════════════════════════════
+// ── 4. Tools 配置 ──
+// ══════════════════════════════════════════════
+
+function renderToolsConfig() {
+  if (!config) return;
+  const container = document.getElementById('tools-config-editor');
+  const tools = config.tools || {};
+  const web = tools.web || {};
+  const search = web.search || {};
+  const fetch_ = web.fetch || {};
+
+  const maskedKey = search.apiKey ? search.apiKey.slice(0, 6) + '...' + search.apiKey.slice(-4) : '';
+
+  let html = `<div class="card" style="border-left:4px solid var(--primary)">
+    <h3>Web Search</h3>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="tc-search-enabled" ${search.enabled ? 'checked' : ''}> 启用搜索
+      </label>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Search API Key</label>
+        <input class="form-input" id="tc-search-key" style="width:100%" value="${search.apiKey || ''}" placeholder="搜索 API Key">
+      </div>
+    </div>
+  </div>
+  <div class="card" style="border-left:4px solid var(--success)">
+    <h3>Web Fetch</h3>
+    <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="tc-fetch-enabled" ${fetch_.enabled !== false ? 'checked' : ''}> 启用网页抓取
+    </label>
+  </div>
+  <div style="text-align:right;margin-top:8px">
+    <button class="btn btn-primary" id="tc-save">保存 Tools 配置</button>
+  </div>`;
+
+  container.innerHTML = html;
+
+  document.getElementById('tc-save').addEventListener('click', async () => {
+    if (!config.tools) config.tools = {};
+    if (!config.tools.web) config.tools.web = {};
+    config.tools.web.search = {
+      enabled: document.getElementById('tc-search-enabled').checked,
+      apiKey: document.getElementById('tc-search-key').value.trim(),
+    };
+    config.tools.web.fetch = {
+      enabled: document.getElementById('tc-fetch-enabled').checked,
+    };
+    const res = await window.api.config.write(config);
+    if (res.ok) toast('Tools 配置已保存');
+    else toast('保存失败: ' + res.error, 'error');
+  });
+}
+
