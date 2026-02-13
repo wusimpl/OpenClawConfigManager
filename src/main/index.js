@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec, spawn } = require('child_process');
@@ -21,7 +21,17 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': ["default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"],
+      },
+    });
+  });
+  createWindow();
+});
 app.on('window-all-closed', () => app.quit());
 
 // ── Config read/write ──
@@ -69,6 +79,12 @@ ipcMain.handle('gateway:health', () => runCmd('openclaw gateway health --json'))
 
 // ── Workspace files ──
 
+function isPathInside(child, parent) {
+  const resolved = path.resolve(child);
+  const resolvedParent = path.resolve(parent) + path.sep;
+  return resolved.startsWith(resolvedParent) || resolved === path.resolve(parent);
+}
+
 ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
   try {
     if (!workspacePath) {
@@ -91,6 +107,9 @@ ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
 ipcMain.handle('workspace:readFile', async (_ev, workspacePath, fileName) => {
   try {
     const filePath = path.join(workspacePath, fileName);
+    if (!isPathInside(filePath, workspacePath)) {
+      return { ok: false, error: '路径越界，拒绝访问' };
+    }
     const content = await fs.promises.readFile(filePath, 'utf-8');
     return { ok: true, content };
   } catch (e) {
@@ -101,6 +120,9 @@ ipcMain.handle('workspace:readFile', async (_ev, workspacePath, fileName) => {
 ipcMain.handle('workspace:writeFile', async (_ev, workspacePath, fileName, content) => {
   try {
     const filePath = path.join(workspacePath, fileName);
+    if (!isPathInside(filePath, workspacePath)) {
+      return { ok: false, error: '路径越界，拒绝访问' };
+    }
     await fs.promises.writeFile(filePath, content, 'utf-8');
     return { ok: true };
   } catch (e) {

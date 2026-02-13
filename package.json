@@ -18,7 +18,9 @@
     "productName": "OpenClaw 管理器",
     "files": [
       "src/**/*",
-      "node_modules/marked/lib/marked.umd.js"
+      "node_modules/marked/lib/marked.umd.js",
+      "node_modules/dompurify/dist/purify.min.js",
+      "node_modules/lucide/dist/umd/lucide.min.js"
     ],
     "win": {
       "target": "nsis",
@@ -37,6 +39,8 @@
     "electron-builder": "^26.7.0"
   },
   "dependencies": {
+    "dompurify": "^3.3.1",
+    "lucide": "^0.563.0",
     "marked": "^17.0.2"
   }
 }

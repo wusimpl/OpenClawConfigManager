@@ -2,6 +2,13 @@
 let config = null;
 let configPath = '';
 
+// ── Helpers ──
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str ?? '';
+  return d.innerHTML;
+}
+
 // ── Navigation ──
 const allPages = ['config', 'providers', 'workspace', 'gateway', 'bindings', 'channels', 'agent-advanced', 'tools-config'];
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -28,7 +35,7 @@ function toast(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
   const icon = type === 'success' ? 'check-circle' : 'alert-circle';
-  el.innerHTML = `<i data-lucide="${icon}" style="width:16px; height:16px; margin-right:8px; vertical-align:middle"></i><span>${msg}</span>`;
+  el.innerHTML = `<i data-lucide="${icon}" style="width:16px; height:16px; margin-right:8px; vertical-align:middle"></i><span>${esc(msg)}</span>`;
   document.body.appendChild(el);
   lucide.createIcons();
   setTimeout(() => {
@@ -103,20 +110,20 @@ function renderAgents() {
 
     html += `<div class="agent-row">
       <div>
-        <div class="agent-name">${agent.name || agent.id}</div>
-        <div class="agent-id">ID: ${agent.id}${agent.default ? ' <span style="color:var(--primary)">• 默认</span>' : ''}</div>
+        <div class="agent-name">${esc(agent.name || agent.id)}</div>
+        <div class="agent-id">ID: ${esc(agent.id)}${agent.default ? ' <span style="color:var(--primary)">• 默认</span>' : ''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
-        <select data-agent-id="${agent.id}" data-orig="${isInherited ? '' : (getAgentModel(agent) || '')}" class="agent-model-select">
-          <option value=""${isInherited ? ' selected' : ''}>继承默认 (${defaultModel || '无'})</option>`;
+        <select data-agent-id="${esc(agent.id)}" data-orig="${esc(isInherited ? '' : (getAgentModel(agent) || ''))}" class="agent-model-select">
+          <option value=""${isInherited ? ' selected' : ''}>继承默认 (${esc(defaultModel || '无')})</option>`;
 
     for (const m of allModels) {
       const sel = (!isInherited && currentModel === m.value) ? ' selected' : '';
-      html += `<option value="${m.value}"${sel}>${m.label}</option>`;
+      html += `<option value="${esc(m.value)}"${sel}>${esc(m.label)}</option>`;
     }
 
     html += `</select>
-        <button class="btn btn-secondary btn-save-agent" data-agent-id="${agent.id}" disabled>保存</button>
+        <button class="btn btn-secondary btn-save-agent" data-agent-id="${esc(agent.id)}" disabled>保存</button>
       </div>
     </div>`;
   }
@@ -144,11 +151,11 @@ function renderDefaultModel() {
 
   let html = '<div class="card"><h3>全局默认模型 (agents.defaults.model.primary)</h3>';
   html += '<div style="display:flex;align-items:center;gap:12px;margin-top:8px;">';
-  html += `<select id="default-model-select" data-orig="${defaultModel || ''}">`;
+  html += `<select id="default-model-select" data-orig="${esc(defaultModel || '')}">`;
   html += `<option value="">不设置</option>`;
   for (const m of allModels) {
     const sel = defaultModel === m.value ? ' selected' : '';
-    html += `<option value="${m.value}"${sel}>${m.label}</option>`;
+    html += `<option value="${esc(m.value)}"${sel}>${esc(m.label)}</option>`;
   }
   html += '</select>';
   html += '<button class="btn btn-secondary" id="btn-save-default" disabled>保存</button>';
@@ -287,16 +294,16 @@ function renderProviders() {
     html += `<div class="card" style="padding: 20px; border-left: 4px solid var(--primary)">
       <div style="display:flex; align-items:flex-start; justify-content:space-between">
         <div>
-          <div style="font-weight:700; font-size:18px; color:var(--text)">${key}</div>
-          <div style="font-size:12px; color:var(--text-muted); margin-top:4px">${p.baseUrl || '(无 URL)'}</div>
+          <div style="font-weight:700; font-size:18px; color:var(--text)">${esc(key)}</div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px">${esc(p.baseUrl || '(无 URL)')}</div>
           <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px">
-            <span><b>API:</b> ${p.api || '(未设置)'}</span>
-            <span><b>Key:</b> ${maskedKey}</span>
+            <span><b>API:</b> ${esc(p.api || '(未设置)')}</span>
+            <span><b>Key:</b> ${esc(maskedKey)}</span>
           </div>
         </div>
         <div style="display:flex; gap:8px">
-          <button class="btn btn-secondary btn-edit-provider" data-key="${key}" style="padding:4px 12px; font-size:12px">编辑</button>
-          <button class="btn btn-danger btn-delete-provider" data-key="${key}" style="padding:4px 12px; font-size:12px">删除</button>
+          <button class="btn btn-secondary btn-edit-provider" data-key="${esc(key)}" style="padding:4px 12px; font-size:12px">编辑</button>
+          <button class="btn btn-danger btn-delete-provider" data-key="${esc(key)}" style="padding:4px 12px; font-size:12px">删除</button>
         </div>
       </div>
       <div style="margin-top:16px; display:flex; flex-wrap:wrap">`;
@@ -304,7 +311,7 @@ function renderProviders() {
       html += '<span style="color:var(--text-muted);font-size:12px">无模型</span>';
     } else {
       for (const m of models) {
-        html += `<span class="provider-model-tag">${m.name || m.id}</span>`;
+        html += `<span class="provider-model-tag">${esc(m.name || m.id)}</span>`;
       }
     }
     html += '</div></div>';
@@ -323,19 +330,19 @@ function renderProviders() {
 function buildProviderFormHtml(key, provider) {
   const isNew = !provider;
   const p = provider || { baseUrl: '', apiKey: '', api: 'anthropic-messages', models: [] };
-  const title = isNew ? '添加 Provider' : `编辑 Provider: ${key}`;
+  const title = isNew ? '添加 Provider' : `编辑 Provider: ${esc(key)}`;
   return `<h3 style="color:var(--text); text-transform:none; font-size:18px; margin-bottom:20px">${title}</h3>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">Provider Key (唯一标识)</label>
-      <input class="form-input" id="pf-key" style="width:100%" value="${key || ''}" ${isNew ? '' : 'disabled'} placeholder="如: openai, kiro">
+      <input class="form-input" id="pf-key" style="width:100%" value="${esc(key || '')}" ${isNew ? '' : 'disabled'} placeholder="如: openai, kiro">
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">Base URL</label>
-      <input class="form-input" id="pf-url" style="width:100%" value="${p.baseUrl || ''}" placeholder="https://api.example.com">
+      <input class="form-input" id="pf-url" style="width:100%" value="${esc(p.baseUrl || '')}" placeholder="https://api.example.com">
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">API Key</label>
-      <input class="form-input" id="pf-apikey" style="width:100%" value="${p.apiKey || ''}" placeholder="sk-...">
+      <input class="form-input" id="pf-apikey" style="width:100%" value="${esc(p.apiKey || '')}" placeholder="sk-...">
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">API 类型</label>
@@ -363,8 +370,8 @@ function createModelRowEl(id, name) {
   const row = document.createElement('div');
   row.className = 'model-row';
   row.style = 'display:flex; gap:8px; margin-bottom:6px; align-items:center';
-  row.innerHTML = `<input type="text" class="form-input mr-id" style="flex:1; padding:4px 8px; font-size:12px" value="${id}" placeholder="model-id">
-    <input type="text" class="form-input mr-name" style="flex:1; padding:4px 8px; font-size:12px" value="${name}" placeholder="显示名称">
+  row.innerHTML = `<input type="text" class="form-input mr-id" style="flex:1; padding:4px 8px; font-size:12px" value="${esc(id)}" placeholder="model-id">
+    <input type="text" class="form-input mr-name" style="flex:1; padding:4px 8px; font-size:12px" value="${esc(name)}" placeholder="显示名称">
     <button class="btn btn-danger" style="padding:4px; line-height:1" title="删除"><i data-lucide="x" style="width:14px;height:14px"></i></button>`;
   row.querySelector('.btn-danger').addEventListener('click', () => row.remove());
   lucide.createIcons();
@@ -412,8 +419,8 @@ function showModelPicker(remoteModels, rowsContainer) {
     const already = existingIds.has(m.id);
     listHtml += `<div class="picker-item" style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); opacity:${already?0.5:1}">
       <div>
-        <div style="font-size:13px; font-weight:600; color:var(--text)">${m.name || m.id}</div>
-        <div style="font-size:11px; color:var(--text-muted)">${m.id}</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text)">${esc(m.name || m.id)}</div>
+        <div style="font-size:11px; color:var(--text-muted)">${esc(m.id)}</div>
       </div>
       ${already
         ? '<span style="color:var(--success); font-size:12px">✓ 已存在</span>'
@@ -497,13 +504,13 @@ function openProviderEditor(existingKey) {
 
 function deleteProvider(providerKey) {
   const affected = findAffectedByProvider(providerKey);
-  let html = `<h3>删除 Provider: ${providerKey}</h3>
+  let html = `<h3>删除 Provider: ${esc(providerKey)}</h3>
     <p style="font-size:13px; color:var(--text-muted); margin:12px 0">确定要删除吗？</p>`;
-  
+
   if (affected.length > 0) {
     html += `<div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:12px; margin-bottom:20px">
       <div style="font-size:12px; color:var(--danger); font-weight:700; margin-bottom:8px">以下配置将被清除：</div>`;
-    for (const a of affected) html += `<div style="font-size:11px; color:var(--danger)">• ${a.label}</div>`;
+    for (const a of affected) html += `<div style="font-size:11px; color:var(--danger)">• ${esc(a.label)}</div>`;
     html += `</div>`;
   }
 
@@ -575,7 +582,7 @@ async function refreshGatewayStatus() {
   if (statusRes.ok && statusData) {
     running = true;
     statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
-    if (statusData.version) statusHtml += `<div style="margin-top:16px; font-size:13px"><span style="color:var(--text-muted)">版本:</span> ${statusData.version}</div>`;
+    if (statusData.version) statusHtml += `<div style="margin-top:16px; font-size:13px"><span style="color:var(--text-muted)">版本:</span> ${esc(statusData.version)}</div>`;
   } else if (statusRes.stdout?.includes('running')) {
     running = true;
     statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
@@ -590,8 +597,8 @@ async function refreshGatewayStatus() {
       running = true;
       statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
       statusHtml += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:16px; font-size:13px">`;
-      if (healthData.uptime) statusHtml += `<div><span style="color:var(--text-muted)">运行时间:</span> ${healthData.uptime}</div>`;
-      if (healthData.agents) statusHtml += `<div><span style="color:var(--text-muted)">Agents:</span> ${healthData.agents}</div>`;
+      if (healthData.uptime) statusHtml += `<div><span style="color:var(--text-muted)">运行时间:</span> ${esc(healthData.uptime)}</div>`;
+      if (healthData.agents) statusHtml += `<div><span style="color:var(--text-muted)">Agents:</span> ${esc(healthData.agents)}</div>`;
       statusHtml += `</div>`;
     }
   }
@@ -611,10 +618,10 @@ function renderGatewayConfig() {
   if (!config) { el.textContent = '配置未加载'; return; }
   const gw = config.gateway || {};
   el.innerHTML = `<div style="display:grid; grid-template-columns: 100px 1fr; gap:8px; font-size:13px">
-    <span style="color:var(--text-muted)">监听端口</span><span>${gw.port || 18789}</span>
-    <span style="color:var(--text-muted)">工作模式</span><span>${gw.mode || '(未设置)'}</span>
-    <span style="color:var(--text-muted)">网络绑定</span><span>${gw.bind || 'loopback'}</span>
-    <span style="color:var(--text-muted)">认证模式</span><span>${gw.auth?.mode || 'none'}</span>
+    <span style="color:var(--text-muted)">监听端口</span><span>${esc(gw.port || 18789)}</span>
+    <span style="color:var(--text-muted)">工作模式</span><span>${esc(gw.mode || '(未设置)')}</span>
+    <span style="color:var(--text-muted)">网络绑定</span><span>${esc(gw.bind || 'loopback')}</span>
+    <span style="color:var(--text-muted)">认证模式</span><span>${esc(gw.auth?.mode || 'none')}</span>
   </div>`;
 }
 
@@ -765,7 +772,7 @@ function onEditorInput() {
 
 function updatePreview(mdText) {
   const preview = document.getElementById('ws-preview');
-  preview.innerHTML = marked.parse(mdText || '');
+  preview.innerHTML = DOMPurify.sanitize(marked.parse(mdText || ''));
 }
 
 function updateSaveBtn() {
@@ -819,10 +826,10 @@ function renderBindings() {
         <div>
           <div style="font-weight:700;font-size:16px;color:var(--text)">规则 #${i + 1}</div>
           <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 12px;margin-top:12px;font-size:13px">
-            <span style="color:var(--text-muted)">Agent</span><span style="color:var(--primary);font-weight:600">${agentName}</span>
-            <span style="color:var(--text-muted)">Channel</span><span>${ch}</span>
-            <span style="color:var(--text-muted)">Peer 类型</span><span>${peerKind}</span>
-            <span style="color:var(--text-muted)">Peer ID</span><span style="font-family:monospace;font-size:12px">${peerId}</span>
+            <span style="color:var(--text-muted)">Agent</span><span style="color:var(--primary);font-weight:600">${esc(agentName)}</span>
+            <span style="color:var(--text-muted)">Channel</span><span>${esc(ch)}</span>
+            <span style="color:var(--text-muted)">Peer 类型</span><span>${esc(peerKind)}</span>
+            <span style="color:var(--text-muted)">Peer ID</span><span style="font-family:monospace;font-size:12px">${esc(peerId)}</span>
           </div>
         </div>
         <div style="display:flex;gap:8px">
@@ -851,13 +858,13 @@ function openBindingEditor(idx) {
   let agentOpts = '<option value="">选择 Agent...</option>';
   for (const a of agents) {
     const sel = binding.agentId === a.id ? ' selected' : '';
-    agentOpts += `<option value="${a.id}"${sel}>${a.name || a.id}</option>`;
+    agentOpts += `<option value="${esc(a.id)}"${sel}>${esc(a.name || a.id)}</option>`;
   }
 
   let chOpts = '<option value="">任意 Channel</option>';
   for (const ch of channels) {
     const sel = binding.match?.channel === ch ? ' selected' : '';
-    chOpts += `<option value="${ch}"${sel}>${ch}</option>`;
+    chOpts += `<option value="${esc(ch)}"${sel}>${esc(ch)}</option>`;
   }
 
   const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">${isNew ? '添加绑定' : '编辑绑定'}</h3>
@@ -879,7 +886,7 @@ function openBindingEditor(idx) {
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Peer ID (留空=匹配所有)</label>
-      <input class="form-input" id="bf-peer-id" style="width:100%" value="${binding.match?.peer?.id || ''}" placeholder="如: oc_xxxx">
+      <input class="form-input" id="bf-peer-id" style="width:100%" value="${esc(binding.match?.peer?.id || '')}" placeholder="如: oc_xxxx">
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
       <button class="btn btn-secondary" id="bf-cancel">取消</button>
@@ -955,12 +962,12 @@ function renderChannels() {
 
     html += `<div class="card" style="border-left:4px solid var(--warning)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div style="font-weight:700;font-size:18px;color:var(--text)">${key}</div>
-        <button class="btn btn-secondary btn-edit-channel" data-key="${key}" style="padding:4px 12px;font-size:12px">编辑</button>
+        <div style="font-weight:700;font-size:18px;color:var(--text)">${esc(key)}</div>
+        <button class="btn btn-secondary btn-edit-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">编辑</button>
       </div>
       <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin-top:16px;font-size:13px">
-        <span style="color:var(--text-muted)">App ID</span><span style="font-family:monospace">${ch.appId || '(未设置)'}</span>
-        <span style="color:var(--text-muted)">App Secret</span><span style="font-family:monospace">${maskedSecret}</span>
+        <span style="color:var(--text-muted)">App ID</span><span style="font-family:monospace">${esc(ch.appId || '(未设置)')}</span>
+        <span style="color:var(--text-muted)">App Secret</span><span style="font-family:monospace">${esc(maskedSecret)}</span>
         <span style="color:var(--text-muted)">启用</span><span>${ch.enabled !== false ? '<span style="color:var(--success)">是</span>' : '<span style="color:var(--danger)">否</span>'}</span>
         <span style="color:var(--text-muted)">需要 @</span><span>${ch.requireMention ? '是' : '否'}</span>
       </div>`;
@@ -970,8 +977,8 @@ function renderChannels() {
       for (const gid of groupKeys) {
         const g = groups[gid];
         html += `<div style="background:#09090b;border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center">
-          <span style="font-family:monospace;color:var(--text-muted)">${gid}</span>
-          <span>requireMention: <b>${g.requireMention !== undefined ? String(g.requireMention) : '继承'}</b></span>
+          <span style="font-family:monospace;color:var(--text-muted)">${esc(gid)}</span>
+          <span>requireMention: <b>${g.requireMention !== undefined ? esc(String(g.requireMention)) : '继承'}</b></span>
         </div>`;
       }
       html += '</div>';
@@ -995,14 +1002,14 @@ function openChannelEditor(key) {
     groupRowsHtml += buildChannelGroupRow(gid, groups[gid]);
   }
 
-  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">编辑 Channel: ${key}</h3>
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">编辑 Channel: ${esc(key)}</h3>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App ID</label>
-      <input class="form-input" id="cf-appid" style="width:100%" value="${ch.appId || ''}">
+      <input class="form-input" id="cf-appid" style="width:100%" value="${esc(ch.appId || '')}">
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">App Secret</label>
-      <input class="form-input" id="cf-secret" style="width:100%" value="${ch.appSecret || ''}">
+      <input class="form-input" id="cf-secret" style="width:100%" value="${esc(ch.appSecret || '')}">
     </div>
     <div class="form-group" style="margin-bottom:16px;display:flex;gap:24px">
       <label style="font-size:13px;display:flex;align-items:center;gap:8px">
@@ -1064,7 +1071,7 @@ function openChannelEditor(key) {
 
 function buildChannelGroupRow(gid, g) {
   return `<div class="cf-group-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px;background:#09090b;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
-    <input class="form-input cf-gid" style="flex:1;padding:4px 8px;font-size:12px;font-family:monospace" value="${gid}" placeholder="群组 ID (oc_xxx)">
+    <input class="form-input cf-gid" style="flex:1;padding:4px 8px;font-size:12px;font-family:monospace" value="${esc(gid)}" placeholder="群组 ID (oc_xxx)">
     <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap">
       <input type="checkbox" class="cf-grm" ${g.requireMention ? 'checked' : ''}> @提及
     </label>
@@ -1123,13 +1130,13 @@ function renderAgentAdvanced() {
     html += `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div>
-          <span style="font-weight:700;font-size:16px;color:var(--text)">${agent.name || agent.id}</span>
-          <span style="font-size:12px;color:var(--text-muted);margin-left:8px">${agent.id}</span>
+          <span style="font-weight:700;font-size:16px;color:var(--text)">${esc(agent.name || agent.id)}</span>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:8px">${esc(agent.id)}</span>
         </div>
-        <button class="btn btn-secondary btn-edit-agent-adv" data-id="${agent.id}" style="padding:4px 12px;font-size:12px">编辑</button>
+        <button class="btn btn-secondary btn-edit-agent-adv" data-id="${esc(agent.id)}" style="padding:4px 12px;font-size:12px">编辑</button>
       </div>
       <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px">
-        <span style="color:var(--text-muted)">触发词</span><span>${patterns || '<span style="color:var(--text-muted)">(无)</span>'}</span>
+        <span style="color:var(--text-muted)">触发词</span><span>${patterns ? esc(patterns) : '<span style="color:var(--text-muted)">(无)</span>'}</span>
       </div>
     </div>`;
   }
@@ -1166,10 +1173,10 @@ function openAgentAdvEditor(agentId) {
   const gc = agent.groupChat || {};
   const patterns = (gc.mentionPatterns || []).join('\n');
 
-  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">Agent 高级配置: ${agent.name || agent.id}</h3>
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">Agent 高级配置: ${esc(agent.name || agent.id)}</h3>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">触发词 / Mention Patterns (每行一个，支持正则)</label>
-      <textarea class="form-input" id="aae-patterns" style="width:100%;height:100px;font-family:monospace;font-size:13px;resize:vertical">${patterns}</textarea>
+      <textarea class="form-input" id="aae-patterns" style="width:100%;height:100px;font-family:monospace;font-size:13px;resize:vertical">${esc(patterns)}</textarea>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
       <button class="btn btn-secondary" id="aae-cancel">取消</button>
@@ -1216,7 +1223,7 @@ function renderToolsConfig() {
       </label>
       <div class="form-group">
         <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Search API Key</label>
-        <input class="form-input" id="tc-search-key" style="width:100%" value="${search.apiKey || ''}" placeholder="搜索 API Key">
+        <input class="form-input" id="tc-search-key" style="width:100%" value="${esc(search.apiKey || '')}" placeholder="搜索 API Key">
       </div>
     </div>
   </div>
