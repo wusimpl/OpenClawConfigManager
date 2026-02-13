@@ -1,0 +1,42 @@
+{
+  "name": "openclaw-config",
+  "version": "1.0.0",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "OpenClaw 配置与网关管理器",
+  "build": {
+    "appId": "com.openclaw.config-manager",
+    "productName": "OpenClaw 管理器",
+    "files": [
+      "src/**/*",
+      "node_modules/marked/lib/marked.umd.js"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": null
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "devDependencies": {
+    "acorn": "^8.15.0",
+    "electron": "^40.4.0",
+    "electron-builder": "^26.7.0"
+  },
+  "dependencies": {
+    "marked": "^17.0.2"
+  }
+}

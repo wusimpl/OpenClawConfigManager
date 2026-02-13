@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenClaw 管理器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e1e4e8; display: flex; height: 100vh; }
+    
+    /* Sidebar */
+    .sidebar { width: 200px; background: #161b22; border-right: 1px solid #30363d; padding: 16px 0; flex-shrink: 0; }
+    .sidebar h2 { padding: 0 16px 16px; font-size: 15px; color: #58a6ff; border-bottom: 1px solid #30363d; margin-bottom: 8px; }
+    .sidebar .nav-item { padding: 10px 16px; cursor: pointer; font-size: 14px; color: #8b949e; transition: all .15s; }
+    .sidebar .nav-item:hover { background: #1c2128; color: #e1e4e8; }
+    .sidebar .nav-item.active { background: #1c2128; color: #58a6ff; border-left: 3px solid #58a6ff; }
+
+    /* Main */
+    .main { flex: 1; overflow-y: auto; padding: 24px 32px; }
+    .main h1 { font-size: 20px; margin-bottom: 20px; }
+
+    /* Cards */
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    .card h3 { font-size: 14px; color: #8b949e; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+
+    /* Agent row */
+    .agent-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #21262d; }
+    .agent-row:last-child { border-bottom: none; }
+    .agent-name { font-weight: 600; font-size: 14px; }
+    .agent-id { font-size: 12px; color: #8b949e; }
+    .agent-model { font-size: 13px; color: #58a6ff; }
+
+    /* Select */
+    select { background: #0d1117; color: #e1e4e8; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 240px; }
+    select:focus { outline: none; border-color: #58a6ff; }
+
+    /* Buttons */
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; transition: all .15s; }
+    .btn-primary { background: #238636; color: #fff; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-danger { background: #da3633; color: #fff; }
+    .btn-danger:hover { background: #f85149; }
+    .btn-secondary { background: #30363d; color: #e1e4e8; }
+    .btn-secondary:hover { background: #3d444d; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-group { display: flex; gap: 8px; margin-top: 12px; }
+    .btn-dormant { background: #21262d; color: #484f58; cursor: default; }
+    .btn-dormant:hover { background: #21262d; }
+    .btn-dirty { background: #238636; color: #fff; animation: pulse .8s ease-in-out infinite alternate; }
+    .btn-dirty:hover { background: #2ea043; }
+    @keyframes pulse { from { box-shadow: 0 0 0 0 rgba(35,134,54,.4); } to { box-shadow: 0 0 0 6px rgba(35,134,54,0); } }
+
+    /* Status badge */
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .badge-green { background: #0d4429; color: #3fb950; }
+    .badge-red { background: #490202; color: #f85149; }
+    .badge-yellow { background: #3d2e00; color: #d29922; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; z-index: 999; animation: fadeIn .2s; }
+    .toast-success { background: #0d4429; color: #3fb950; border: 1px solid #238636; }
+    .toast-error { background: #490202; color: #f85149; border: 1px solid #da3633; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Loading */
+    .loading { color: #8b949e; font-style: italic; }
+
+    /* Gateway info */
+    .gw-info { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 13px; }
+    .gw-label { color: #8b949e; }
+
+    /* Hidden */
+    .hidden { display: none; }
+    /* Modal */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.6); z-index: 900; display: flex; align-items: center; justify-content: center; animation: fadeIn .15s; }
+    .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 24px; min-width: 420px; max-width: 560px; }
+    .modal h3 { font-size: 16px; color: #e1e4e8; margin-bottom: 12px; text-transform: none; letter-spacing: 0; }
+    .modal p { font-size: 13px; color: #8b949e; margin-bottom: 8px; line-height: 1.5; }
+    .modal .affected-list { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px 14px; margin: 10px 0 16px; font-size: 13px; }
+    .modal .affected-item { padding: 4px 0; color: #f0883e; }
+    .modal .btn-group { justify-content: flex-end; }
+
+    /* Provider card */
+    .provider-card { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 14px 16px; margin-bottom: 10px; }
+    .provider-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .provider-name { font-weight: 600; font-size: 15px; color: #58a6ff; }
+    .provider-url { font-size: 12px; color: #8b949e; word-break: break-all; }
+    .provider-api { font-size: 12px; color: #8b949e; margin-top: 2px; }
+    .provider-models { margin-top: 8px; }
+    .provider-model-tag { display: inline-block; background: #1c2128; border: 1px solid #30363d; border-radius: 4px; padding: 2px 8px; font-size: 12px; color: #e1e4e8; margin: 2px 4px 2px 0; }
+    .provider-actions { display: flex; gap: 6px; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* Form */
+    .form-group { margin-bottom: 12px; }
+    .form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+    .form-input { width: 100%; background: #0d1117; color: #e1e4e8; border: 1px solid #30363d; border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+    .form-input:focus { outline: none; border-color: #58a6ff; }
+    textarea.form-input { min-height: 80px; resize: vertical; font-family: monospace; }
+    /* Model rows in editor */
+    .model-rows { max-height: 260px; overflow-y: auto; margin-bottom: 8px; }
+    .model-row { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid #21262d; }
+    .model-row:last-child { border-bottom: none; }
+    .model-row input { flex: 1; background: #0d1117; color: #e1e4e8; border: 1px solid #30363d; border-radius: 4px; padding: 5px 8px; font-size: 12px; min-width: 0; }
+    .model-row input:focus { outline: none; border-color: #58a6ff; }
+    .model-row .btn-rm { background: none; border: none; color: #f85149; cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
+    .model-row .btn-rm:hover { color: #ff7b72; }
+    .model-row-header { display: flex; gap: 6px; padding: 0 0 4px; font-size: 11px; color: #8b949e; }
+    .model-row-header span { flex: 1; }
+    .model-row-header span:last-child { width: 22px; flex: none; }
+    .fetch-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .fetch-status { font-size: 12px; color: #8b949e; }
+    .modal-wide { min-width: 520px; max-width: 640px; }
+    /* Fetch picker overlay (nested modal) */
+    .picker-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 950; display: flex; align-items: center; justify-content: center; animation: fadeIn .15s; }
+    .picker { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; width: 480px; max-height: 70vh; display: flex; flex-direction: column; }
+    .picker h3 { font-size: 15px; margin-bottom: 10px; color: #e1e4e8; text-transform: none; letter-spacing: 0; }
+    .picker-search { width: 100%; background: #0d1117; color: #e1e4e8; border: 1px solid #30363d; border-radius: 6px; padding: 7px 10px; font-size: 13px; margin-bottom: 8px; }
+    .picker-search:focus { outline: none; border-color: #58a6ff; }
+    .picker-list { flex: 1; overflow-y: auto; margin-bottom: 12px; }
+    .picker-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border-bottom: 1px solid #21262d; font-size: 13px; }
+    .picker-item:last-child { border-bottom: none; }
+    .picker-item.already { opacity: .45; }
+    .picker-item .pi-name { color: #e1e4e8; }
+    .picker-item .pi-id { color: #8b949e; font-size: 11px; margin-left: 8px; }
+    .picker-item .pi-add { background: #238636; color: #fff; border: none; border-radius: 4px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .picker-item .pi-add:hover { background: #2ea043; }
+    .picker-item .pi-added { color: #3fb950; font-size: 12px; white-space: nowrap; }
+    .picker-count { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+
+    /* Workspace editor */
+    #page-workspace { display: flex; flex-direction: column; height: calc(100vh - 48px); }
+    #page-workspace.hidden { display: none; }
+    #page-workspace h1 { flex-shrink: 0; }
+    .ws-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; flex-shrink: 0; }
+    .ws-file-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ws-file-tab { padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; background: #21262d; color: #8b949e; border: 1px solid transparent; transition: all .15s; white-space: nowrap; }
+    .ws-file-tab:hover { background: #30363d; color: #e1e4e8; }
+    .ws-file-tab.active { background: #1c2128; color: #58a6ff; border-color: #58a6ff; }
+    .ws-file-tab.dirty::after { content: ' •'; color: #f0883e; }
+    .ws-editor-wrap { display: flex; gap: 0; flex: 1; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; min-height: 0; }
+    .ws-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .ws-pane-header { padding: 6px 14px; font-size: 12px; color: #8b949e; background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0; }
+    .ws-pane-edit textarea { flex: 1; background: #0d1117; color: #e1e4e8; border: none; padding: 14px; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; font-size: 13px; line-height: 1.6; resize: none; outline: none; tab-size: 2; }
+    .ws-divider { width: 1px; background: #30363d; flex-shrink: 0; }
+    .ws-preview-body { flex: 1; overflow-y: auto; padding: 14px 20px; background: #0d1117; font-size: 14px; line-height: 1.7; }
+    .ws-preview-body h1 { font-size: 22px; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid #30363d; color: #e1e4e8; }
+    .ws-preview-body h2 { font-size: 18px; margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #21262d; color: #e1e4e8; }
+    .ws-preview-body h3 { font-size: 15px; margin: 14px 0 6px; color: #e1e4e8; }
+    .ws-preview-body p { margin: 0 0 10px; color: #c9d1d9; }
+    .ws-preview-body ul, .ws-preview-body ol { margin: 0 0 10px; padding-left: 24px; color: #c9d1d9; }
+    .ws-preview-body li { margin-bottom: 4px; }
+    .ws-preview-body code { background: #161b22; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #f0883e; font-family: 'Cascadia Code', 'Consolas', monospace; }
+    .ws-preview-body pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; overflow-x: auto; margin: 0 0 12px; }
+    .ws-preview-body pre code { background: none; padding: 0; color: #e1e4e8; }
+    .ws-preview-body blockquote { border-left: 3px solid #58a6ff; padding: 4px 14px; margin: 0 0 10px; color: #8b949e; }
+    .ws-preview-body table { border-collapse: collapse; margin: 0 0 12px; width: 100%; }
+    .ws-preview-body th, .ws-preview-body td { border: 1px solid #30363d; padding: 6px 12px; font-size: 13px; }
+    .ws-preview-body th { background: #161b22; color: #e1e4e8; }
+    .ws-preview-body td { color: #c9d1d9; }
+    .ws-preview-body strong { color: #e1e4e8; }
+    .ws-preview-body em { color: #8b949e; }
+    .ws-preview-body hr { border: none; border-top: 1px solid #30363d; margin: 16px 0; }
+    .ws-preview-body a { color: #58a6ff; text-decoration: none; }
+    .ws-preview-body a:hover { text-decoration: underline; }
+    .ws-preview-placeholder { color: #484f58; font-style: italic; padding-top: 40px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>🦞 OpenClaw</h2>
+    <div class="nav-item active" data-page="config">📋 配置管理</div>
+    <div class="nav-item" data-page="providers">⚡ Provider 管理</div>
+    <div class="nav-item" data-page="workspace">📝 身份文件</div>
+    <div class="nav-item" data-page="gateway">🌐 网关管理</div>
+  </div>
+
+  <div class="main">
+    <!-- Config Page -->
+    <div id="page-config">
+      <h1>Agent 模型配置</h1>
+      <div id="config-loading" class="loading">加载配置中...</div>
+      <div id="agents-list"></div>
+      <div id="default-model-card"></div>
+    </div>
+
+    <!-- Providers Page -->
+    <div id="page-providers" class="hidden">
+      <h1>Model Provider 管理</h1>
+      <div style="margin-bottom:16px">
+        <button class="btn btn-primary" id="btn-add-provider">➕ 添加 Provider</button>
+      </div>
+      <div id="providers-list"></div>
+    </div>
+
+    <!-- Workspace Page -->
+    <div id="page-workspace" class="hidden">
+      <h1>Agent 身份文件编辑</h1>
+      <div class="ws-toolbar">
+        <select id="ws-agent-select"><option value="">选择 Agent...</option></select>
+        <div class="ws-file-tabs" id="ws-file-tabs"></div>
+        <div style="flex:1"></div>
+        <button class="btn btn-dormant" id="ws-btn-save" disabled>保存</button>
+      </div>
+      <div class="ws-editor-wrap">
+        <div class="ws-pane ws-pane-edit">
+          <div class="ws-pane-header">编辑</div>
+          <textarea id="ws-editor" placeholder="选择一个 Agent 和文件开始编辑..." spellcheck="false"></textarea>
+        </div>
+        <div class="ws-divider"></div>
+        <div class="ws-pane ws-pane-preview">
+          <div class="ws-pane-header">预览</div>
+          <div id="ws-preview" class="ws-preview-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gateway Page -->
+    <div id="page-gateway" class="hidden">
+      <h1>网关管理</h1>
+      <div class="card">
+        <h3>网关状态</h3>
+        <div id="gw-status" class="loading">查询中...</div>
+      </div>
+      <div class="card">
+        <h3>操作</h3>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="btn-gw-start">▶ 启动</button>
+          <button class="btn btn-danger" id="btn-gw-stop">⏹ 停止</button>
+          <button class="btn btn-secondary" id="btn-gw-restart">🔄 重启</button>
+          <button class="btn btn-secondary" id="btn-gw-refresh">刷新状态</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>网关配置</h3>
+        <div id="gw-config-info"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
