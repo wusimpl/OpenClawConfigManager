@@ -241,8 +241,9 @@
       padding: 20px; font-family: 'JetBrains Mono', 'Fira Code', monospace; 
       font-size: 14px; line-height: 1.6; resize: none; outline: none; border: none;
     }
-    .ws-preview-body { 
-      padding: 24px; color: #d4d4d8; line-height: 1.7; 
+    .ws-preview-body {
+      padding: 24px; color: #d4d4d8; line-height: 1.7;
+      flex: 1; overflow-y: auto; min-height: 0;
     }
     .ws-preview-body h1 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 16px; }
 
@@ -251,6 +252,20 @@
       background: #27272a; border: 1px solid var(--border); 
       border-radius: 6px; padding: 4px 10px; font-size: 12px; 
       color: var(--text-muted); margin: 0 6px 6px 0; display: inline-block;
+    }
+
+    /* Restart required indicator */
+    .restart-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--warning);
+      margin-bottom: 20px;
     }
 
     .hidden { display: none !important; }
@@ -284,7 +299,7 @@
         <i data-lucide="settings"></i> Agent 高级配置
       </div>
       <div class="nav-item" data-page="tools-config">
-        <i data-lucide="wrench"></i> Tools 配置
+        <i data-lucide="wrench"></i> Tools 配置 <i data-lucide="power" style="width:12px;height:12px;color:var(--warning)"></i>
       </div>
     </div>
   </div>
@@ -316,11 +331,11 @@
         <button class="btn btn-secondary" id="ws-btn-save" disabled>保存</button>
       </div>
       <div class="ws-editor-wrap">
-        <div class="ws-pane" style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border)">
+        <div class="ws-pane" style="flex:1 1 0; min-width:0; display:flex; flex-direction:column; border-right:1px solid var(--border)">
           <div class="ws-pane-header">Editor</div>
           <textarea id="ws-editor" spellcheck="false" placeholder="选择文件开始编辑..."></textarea>
         </div>
-        <div class="ws-pane" style="flex:1; display:flex; flex-direction:column; background: #0c0c0e">
+        <div class="ws-pane" style="flex:1 1 0; min-width:0; display:flex; flex-direction:column; background: #0c0c0e">
           <div class="ws-pane-header">Preview</div>
           <div id="ws-preview" class="ws-preview-body"></div>
         </div>
@@ -373,6 +388,10 @@
 
     <div id="page-tools-config" class="hidden page-content">
       <h1>Tools 配置</h1>
+      <div class="restart-notice">
+        <i data-lucide="power" style="width:16px;height:16px;flex-shrink:0"></i>
+        <span>修改此页面的配置后需要重启网关才能生效</span>
+      </div>
       <div id="tools-config-editor"></div>
     </div>
   </div>

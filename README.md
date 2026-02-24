@@ -1,4 +1,4 @@
-# OpenClaw 管理器
+# OpenClaw 配置管理器
 
 OpenClaw 的桌面配置管理工具，提供可视化界面来管理 OpenClaw 的各项配置，替代手动编辑配置文件。
 

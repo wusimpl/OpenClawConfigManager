@@ -949,6 +949,9 @@ document.getElementById('btn-add-channel').addEventListener('click', () => openA
 // ── 2. Channels (飞书等) ──
 // ══════════════════════════════════════════════
 
+// Channels that support hot reload per official docs
+const HOT_RELOAD_CHANNELS = new Set(['whatsapp', 'telegram', 'discord', 'signal', 'imessage', 'web', 'slack', 'mattermost', 'googlechat']);
+
 function renderChannels() {
   if (!config) return;
   const container = document.getElementById('channels-editor');
@@ -962,6 +965,7 @@ function renderChannels() {
 
   let html = '';
   for (const key of keys) {
+    const needsRestart = !HOT_RELOAD_CHANNELS.has(key);
     const ch = channels[key];
     const maskedSecret = ch.appSecret ? ch.appSecret.slice(0, 4) + '...' + ch.appSecret.slice(-4) : '(未设置)';
     const groups = ch.groups || {};
@@ -969,7 +973,7 @@ function renderChannels() {
 
     html += `<div class="card" style="border-left:4px solid var(--warning)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div style="font-weight:700;font-size:18px;color:var(--text)">${esc(key)}</div>
+        <div style="font-weight:700;font-size:18px;color:var(--text)">${esc(key)}${needsRestart ? ' <i data-lucide="power" style="width:14px;height:14px;color:var(--warning);vertical-align:middle" title="修改后需重启网关"></i>' : ''}</div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-secondary btn-edit-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">编辑</button>
           <button class="btn btn-danger btn-del-channel" data-key="${esc(key)}" style="padding:4px 12px;font-size:12px">删除</button>
@@ -996,6 +1000,7 @@ function renderChannels() {
     html += '</div>';
   }
   container.innerHTML = html;
+  lucide.createIcons();
 
   container.querySelectorAll('.btn-edit-channel').forEach(btn => {
     btn.addEventListener('click', () => openChannelEditor(btn.dataset.key));
@@ -1077,7 +1082,11 @@ function openChannelEditor(key) {
     config.channels[key] = updated;
     const res = await window.api.config.write(config);
     closeModal(overlay);
-    if (res.ok) { toast('Channel 已保存'); renderChannels(); }
+    if (res.ok) {
+      const msg = HOT_RELOAD_CHANNELS.has(key) ? 'Channel 已保存' : 'Channel 已保存，需重启网关生效';
+      toast(msg);
+      renderChannels();
+    }
     else toast('保存失败: ' + res.error, 'error');
   });
 }
@@ -1110,7 +1119,11 @@ async function deleteChannel(key) {
     delete config.channels[key];
     const res = await window.api.config.write(config);
     closeModal(overlay);
-    if (res.ok) { toast('已删除 Channel'); renderChannels(); }
+    if (res.ok) {
+      const msg = HOT_RELOAD_CHANNELS.has(key) ? '已删除 Channel' : '已删除 Channel，需重启网关生效';
+      toast(msg);
+      renderChannels();
+    }
     else toast('删除失败: ' + res.error, 'error');
   });
 }
@@ -1157,7 +1170,11 @@ function openAddChannelEditor() {
     };
     const res = await window.api.config.write(config);
     closeModal(overlay);
-    if (res.ok) { toast('Channel 已添加'); renderChannels(); }
+    if (res.ok) {
+      const msg = HOT_RELOAD_CHANNELS.has(key) ? 'Channel 已添加' : 'Channel 已添加，需重启网关生效';
+      toast(msg);
+      renderChannels();
+    }
     else toast('保存失败: ' + res.error, 'error');
   });
 }
@@ -1327,7 +1344,7 @@ function renderToolsConfig() {
       enabled: document.getElementById('tc-fetch-enabled').checked,
     };
     const res = await window.api.config.write(config);
-    if (res.ok) toast('Tools 配置已保存');
+    if (res.ok) toast('Tools 配置已保存，需重启网关生效');
     else toast('保存失败: ' + res.error, 'error');
   });
 }
