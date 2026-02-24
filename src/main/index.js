@@ -1,9 +1,104 @@
 const { app, BrowserWindow, ipcMain, session, Tray, Menu, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec, spawn } = require('child_process');
+const { execFile, spawnSync } = require('child_process');
 
 const CONFIG_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'openclaw.json');
+
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
+function splitPathEntries(pathValue) {
+  return (pathValue || '').split(path.delimiter).map((value) => value.trim()).filter(Boolean);
+}
+
+function getLoginShellValue(command) {
+  const shell = process.env.SHELL || '/bin/zsh';
+  const res = spawnSync(shell, ['-ilc', command], { timeout: 10000, encoding: 'utf-8' });
+  if (res.error || res.status !== 0) return null;
+  return res.stdout?.trim() || null;
+}
+
+function isExecutableFile(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function getNvmBinDirs(homePath) {
+  if (!homePath) return [];
+  const nvmNodeDir = path.join(homePath, '.nvm', 'versions', 'node');
+  try {
+    return fs.readdirSync(nvmNodeDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(nvmNodeDir, entry.name, 'bin'));
+  } catch {
+    return [];
+  }
+}
+
+const openclawNames = process.platform === 'win32'
+  ? ['openclaw.cmd', 'openclaw.exe', 'openclaw.bat', 'openclaw']
+  : ['openclaw'];
+
+const resolveNotes = [];
+const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+let loginShellPath = null;
+let loginOpenclawPath = null;
+
+if (process.platform === 'darwin') {
+  loginShellPath = getLoginShellValue('echo $PATH');
+  if (!loginShellPath) resolveNotes.push('无法从 login shell 读取 PATH');
+  loginOpenclawPath = getLoginShellValue('command -v openclaw');
+  if (!loginOpenclawPath) resolveNotes.push('login shell 未返回 openclaw 路径');
+}
+
+let pathEntries = uniqueStrings([
+  ...splitPathEntries(process.env.PATH || ''),
+  ...splitPathEntries(loginShellPath || ''),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  path.join(homeDir, '.local', 'bin'),
+  path.join(homeDir, '.volta', 'bin'),
+  path.join(homeDir, '.asdf', 'shims'),
+  ...getNvmBinDirs(homeDir),
+]);
+
+function resolveOpenclawPath() {
+  const candidatePaths = [];
+  if (loginOpenclawPath && path.isAbsolute(loginOpenclawPath)) {
+    candidatePaths.push(loginOpenclawPath);
+  }
+  for (const dirPath of pathEntries) {
+    for (const name of openclawNames) {
+      candidatePaths.push(path.join(dirPath, name));
+    }
+  }
+  for (const candidate of uniqueStrings(candidatePaths)) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+const openclawPath = resolveOpenclawPath();
+if (openclawPath) {
+  pathEntries = uniqueStrings([path.dirname(openclawPath), ...pathEntries]);
+} else {
+  resolveNotes.push('未解析到 openclaw 绝对路径，将回退 PATH 查找');
+}
+
+const userPath = pathEntries.join(path.delimiter);
 const PREFS_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'ui-prefs.json');
 
 let mainWindow;
@@ -219,23 +314,33 @@ ipcMain.handle('config:write', async (_ev, json) => {
 
 // ── Gateway management ──
 
-function runCmd(cmd) {
+function runOpenclaw(args) {
   return new Promise((resolve) => {
-    exec(cmd, { timeout: 30000 }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: stdout?.trim(), stderr: stderr?.trim(), code: err?.code });
+    execFile(openclawPath || 'openclaw', args, {
+      timeout: 30000,
+      env: { ...process.env, PATH: userPath },
+      windowsHide: true,
+    }, (err, stdout, stderr) => {
+      const stdoutText = stdout?.trim();
+      let stderrText = stderr?.trim();
+      if (err && err.code === 'ENOENT' && !stderrText) {
+        const notesText = resolveNotes.length ? `（${resolveNotes.join('；')}）` : '';
+        stderrText = `openclaw 命令不可用${notesText}`;
+      }
+      resolve({ ok: !err, stdout: stdoutText, stderr: stderrText, code: err?.code });
     });
   });
 }
 
-ipcMain.handle('gateway:status', () => runCmd('openclaw gateway status --json'));
+ipcMain.handle('gateway:status', () => runOpenclaw(['gateway', 'status', '--json']));
 
-ipcMain.handle('gateway:start', () => runCmd('openclaw gateway start'));
+ipcMain.handle('gateway:start', () => runOpenclaw(['gateway', 'start']));
 
-ipcMain.handle('gateway:stop', () => runCmd('openclaw gateway stop'));
+ipcMain.handle('gateway:stop', () => runOpenclaw(['gateway', 'stop']));
 
-ipcMain.handle('gateway:restart', () => runCmd('openclaw gateway restart'));
+ipcMain.handle('gateway:restart', () => runOpenclaw(['gateway', 'restart']));
 
-ipcMain.handle('gateway:health', () => runCmd('openclaw gateway health --json'));
+ipcMain.handle('gateway:health', () => runOpenclaw(['gateway', 'health', '--json']));
 
 // ── Workspace files ──
 

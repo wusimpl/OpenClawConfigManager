@@ -576,30 +576,63 @@ async function refreshGatewayStatus() {
   let statusData = null;
   try { statusData = JSON.parse(statusRes.stdout); } catch {}
 
+  let healthData = null;
+  try { healthData = JSON.parse(healthRes.stdout); } catch {}
+
   let running = false;
   let statusHtml = '';
 
-  if (statusRes.ok && statusData) {
+  // 判断运行状态：优先从 service.runtime.status 判断，兼容旧格式
+  if (statusData) {
+    const runtimeStatus = statusData.service?.runtime?.status;
+    if (runtimeStatus === 'running') {
+      running = true;
+    } else if (statusData.rpc?.ok) {
+      // rpc 连通也说明网关在运行
+      running = true;
+    }
+  }
+  // 兜底：stdout 包含 running 文本
+  if (!running && statusRes.stdout?.includes('running')) {
     running = true;
-    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
-    if (statusData.version) statusHtml += `<div style="margin-top:16px; font-size:13px"><span style="color:var(--text-muted)">版本:</span> ${esc(statusData.version)}</div>`;
-  } else if (statusRes.stdout?.includes('running')) {
+  }
+  // 兜底：health 返回 ok
+  if (!running && healthData?.ok) {
     running = true;
-    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
-  } else {
-    statusHtml = `<span class="badge badge-red"><i data-lucide="x" style="width:12px;height:12px"></i> 已停止</span>`;
   }
 
-  if (healthRes.ok) {
-    let healthData = null;
-    try { healthData = JSON.parse(healthRes.stdout); } catch {}
-    if (healthData) {
-      running = true;
-      statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
+  if (running) {
+    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
+
+    // 从 status 中提取详细信息
+    const details = [];
+    const pid = statusData?.service?.runtime?.pid;
+    if (pid) details.push({ label: 'PID', value: String(pid) });
+    const port = statusData?.gateway?.port;
+    if (port) details.push({ label: '端口', value: String(port) });
+    const bind = statusData?.gateway?.bindHost;
+    if (bind) details.push({ label: '绑定', value: bind });
+
+    // 从 health 中提取 agent 和 channel 信息
+    if (healthData?.ok) {
+      const agentCount = healthData.agents?.length;
+      if (agentCount) details.push({ label: 'Agents', value: String(agentCount) });
+      const channelNames = healthData.channelOrder || Object.keys(healthData.channels || {});
+      if (channelNames.length) details.push({ label: 'Channels', value: channelNames.join(', ') });
+    }
+
+    if (details.length > 0) {
       statusHtml += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:16px; font-size:13px">`;
-      if (healthData.uptime) statusHtml += `<div><span style="color:var(--text-muted)">运行时间:</span> ${esc(healthData.uptime)}</div>`;
-      if (healthData.agents) statusHtml += `<div><span style="color:var(--text-muted)">Agents:</span> ${esc(healthData.agents)}</div>`;
+      for (const d of details) {
+        statusHtml += `<div><span style="color:var(--text-muted)">${esc(d.label)}:</span> ${esc(d.value)}</div>`;
+      }
       statusHtml += `</div>`;
+    }
+  } else {
+    statusHtml = `<span class="badge badge-red"><i data-lucide="x" style="width:12px;height:12px"></i> 已停止</span>`;
+    // 如果有错误信息，显示出来帮助排查
+    if (statusRes.stderr) {
+      statusHtml += `<div style="margin-top:12px;font-size:12px;color:var(--danger)">${esc(statusRes.stderr)}</div>`;
     }
   }
 
