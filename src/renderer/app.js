@@ -56,6 +56,7 @@ async function loadConfig() {
   config = res.data;
   configPath = res.path;
   document.getElementById('config-loading').classList.add('hidden');
+  wsState.initialized = false;
   renderAgents();
   renderDefaultModel();
 }
@@ -985,6 +986,30 @@ document.getElementById('btn-add-channel').addEventListener('click', () => openA
 // Channels that support hot reload per official docs
 const HOT_RELOAD_CHANNELS = new Set(['whatsapp', 'telegram', 'discord', 'signal', 'imessage', 'web', 'slack', 'mattermost', 'googlechat']);
 
+// Channels that do NOT require gateway restart (restart icon hidden)
+const NO_GATEWAY_RESTART_ICON_CHANNELS = new Set([
+  'bluebubbles',
+  'discord',
+  'feishu',
+  'googlechat',
+  'imessage',
+  'irc',
+  'line',
+  'matrix',
+  'mattermost',
+  'msteams',
+  'nextcloud-talk',
+  'nostr',
+  'signal',
+  'slack',
+  'synology-chat',
+  'telegram',
+  'tlon',
+  'whatsapp',
+  'zalo',
+  'zalouser',
+]);
+
 function renderChannels() {
   if (!config) return;
   const container = document.getElementById('channels-editor');
@@ -998,7 +1023,7 @@ function renderChannels() {
 
   let html = '';
   for (const key of keys) {
-    const needsRestart = !HOT_RELOAD_CHANNELS.has(key);
+    const needsRestart = !NO_GATEWAY_RESTART_ICON_CHANNELS.has(key);
     const ch = channels[key];
     const maskedSecret = ch.appSecret ? ch.appSecret.slice(0, 4) + '...' + ch.appSecret.slice(-4) : '(未设置)';
     const groups = ch.groups || {};
@@ -1381,4 +1406,3 @@ function renderToolsConfig() {
     else toast('保存失败: ' + res.error, 'error');
   });
 }
-
