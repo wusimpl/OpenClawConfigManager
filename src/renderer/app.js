@@ -719,9 +719,12 @@ let wsState = {
 };
 
 function getAgentWorkspace(agentId) {
-  const agents = config?.agents?.list || [];
-  const agent = agents.find(a => a.id === agentId);
-  return agent?.workspace || config?.agents?.defaults?.workspace || null;
+  if (agentId) {
+    const agents = config?.agents?.list || [];
+    const agent = agents.find(a => a.id === agentId);
+    if (agent?.workspace) return agent.workspace;
+  }
+  return config?.agents?.defaults?.workspace || null;
 }
 
 function initWorkspacePage() {
@@ -729,12 +732,22 @@ function initWorkspacePage() {
   const select = document.getElementById('ws-agent-select');
   if (!wsState.initialized) {
     const agents = config.agents?.list || [];
-    select.innerHTML = '<option value="">选择 Agent...</option>';
-    for (const agent of agents) {
-      const opt = document.createElement('option');
-      opt.value = agent.id;
-      opt.textContent = agent.name || agent.id;
-      select.appendChild(opt);
+    const defaultWs = config.agents?.defaults?.workspace || null;
+
+    if (agents.length === 0 && defaultWs) {
+      // 没有 agent 列表，但有默认 workspace，隐藏选择器，直接加载
+      select.style.display = 'none';
+      wsState.currentAgent = null;
+      loadWorkspaceFiles(defaultWs);
+    } else {
+      select.style.display = '';
+      select.innerHTML = '<option value="">选择 Agent...</option>';
+      for (const agent of agents) {
+        const opt = document.createElement('option');
+        opt.value = agent.id;
+        opt.textContent = agent.name || agent.id;
+        select.appendChild(opt);
+      }
     }
 
     select.addEventListener('change', () => {
@@ -745,8 +758,13 @@ function initWorkspacePage() {
       wsState.currentAgent = select.value || null;
       wsState.currentFile = null;
       wsState.dirty = false;
-      if (wsState.currentAgent) loadAgentFiles(wsState.currentAgent);
-      else clearEditor();
+      if (wsState.currentAgent) {
+        const wsPath = getAgentWorkspace(wsState.currentAgent);
+        if (wsPath) loadWorkspaceFiles(wsPath);
+        else clearEditor();
+      } else {
+        clearEditor();
+      }
     });
 
     const editor = document.getElementById('ws-editor');
@@ -756,8 +774,7 @@ function initWorkspacePage() {
   }
 }
 
-async function loadAgentFiles(agentId) {
-  const wsPath = getAgentWorkspace(agentId);
+async function loadWorkspaceFiles(wsPath) {
   if (!wsPath) {
     document.getElementById('ws-file-tabs').innerHTML = '<span style="color:var(--danger);font-size:12px">未配置 Workspace</span>';
     return;
