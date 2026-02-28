@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld('api', {
     readFile: (wsPath, fileName) => ipcRenderer.invoke('workspace:readFile', wsPath, fileName),
     writeFile: (wsPath, fileName, content) => ipcRenderer.invoke('workspace:writeFile', wsPath, fileName, content),
   },
+  logs: {
+    read: (opts) => ipcRenderer.invoke('logs:read', opts),
+  },
 });

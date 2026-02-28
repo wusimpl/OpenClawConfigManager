@@ -1,6 +1,32 @@
 // ── State ──
 let config = null;
 let configPath = '';
+const gatewayLogs = [];
+const MAX_GATEWAY_LOGS = 200;
+const LOG_PAGE_DEFAULT_SOURCE = 'service-stdout';
+const LOG_PAGE_DEFAULT_INTERVAL = 10000;
+const LOG_PAGE_EMPTY_TEXT = '暂无日志内容';
+const logPageState = {
+  initialized: false,
+  active: false,
+  source: LOG_PAGE_DEFAULT_SOURCE,
+  intervalMs: LOG_PAGE_DEFAULT_INTERVAL,
+  timer: null,
+  cursor: null,
+  lastPath: '',
+  loading: false,
+};
+let wsState = {
+  currentAgent: null,
+  currentFile: null,
+  files: [],
+  originalContent: '',
+  dirty: false,
+  initialized: false,
+};
+let externalConfigReloadInProgress = false;
+let externalConfigReloadPending = false;
+const EXTERNAL_CONFIG_RETRY_DELAYS = [0, 200, 500];
 
 // ── Helpers ──
 function esc(str) {
@@ -10,7 +36,7 @@ function esc(str) {
 }
 
 // ── Navigation ──
-const allPages = ['config', 'providers', 'workspace', 'gateway', 'bindings', 'channels', 'agent-advanced', 'tools-config'];
+const allPages = ['config', 'providers', 'workspace', 'gateway', 'logs', 'bindings', 'channels', 'agent-advanced', 'tools-config'];
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -20,7 +46,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
       const el = document.getElementById('page-' + p);
       el.classList.toggle('hidden', p !== page);
     });
+    if (page !== 'logs') stopOpenclawLogAutoRefresh();
     if (page === 'gateway') refreshGatewayStatus();
+    if (page === 'logs') initOpenclawLogsPage();
     if (page === 'providers') renderProviders();
     if (page === 'workspace') initWorkspacePage();
     if (page === 'bindings') renderBindings();
@@ -47,18 +75,92 @@ function toast(msg, type = 'success') {
 
 // ── Config Page ──
 
-async function loadConfig() {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hasUnsavedUiChanges() {
+  return Boolean(document.querySelector('.btn-dirty'));
+}
+
+function syncActivePageAfterConfigLoad() {
+  const activePage = document.querySelector('.nav-item.active')?.dataset.page;
+  if (activePage === 'providers') renderProviders();
+  if (activePage === 'workspace') initWorkspacePage();
+  if (activePage === 'bindings') renderBindings();
+  if (activePage === 'channels') renderChannels();
+  if (activePage === 'agent-advanced') renderAgentAdvanced();
+  if (activePage === 'tools-config') renderToolsConfig();
+}
+
+async function loadConfig(options = {}) {
+  const { showLoadingError = true, syncActivePage = true } = options;
+  const loadingEl = document.getElementById('config-loading');
   const res = await window.api.config.read();
   if (!res.ok) {
-    document.getElementById('config-loading').textContent = '加载失败: ' + res.error;
-    return;
+    if (showLoadingError && loadingEl) {
+      loadingEl.textContent = '加载失败: ' + res.error;
+      loadingEl.classList.remove('hidden');
+    }
+    return { ok: false, error: res.error };
   }
   config = res.data;
   configPath = res.path;
-  document.getElementById('config-loading').classList.add('hidden');
+  if (loadingEl) loadingEl.classList.add('hidden');
   wsState.initialized = false;
   renderAgents();
   renderDefaultModel();
+  if (syncActivePage) syncActivePageAfterConfigLoad();
+  return { ok: true };
+}
+
+async function reloadConfigWithRetry() {
+  let lastError = '未知错误';
+  for (let i = 0; i < EXTERNAL_CONFIG_RETRY_DELAYS.length; i++) {
+    const waitMs = EXTERNAL_CONFIG_RETRY_DELAYS[i];
+    if (waitMs > 0) await sleep(waitMs);
+
+    const result = await loadConfig({
+      showLoadingError: i === EXTERNAL_CONFIG_RETRY_DELAYS.length - 1,
+      syncActivePage: true,
+    });
+
+    if (result.ok) return { ok: true };
+    lastError = result.error || lastError;
+  }
+
+  return { ok: false, error: lastError };
+}
+
+async function handleExternalConfigChanged() {
+  if (externalConfigReloadInProgress) {
+    externalConfigReloadPending = true;
+    return;
+  }
+
+  externalConfigReloadInProgress = true;
+  try {
+    do {
+      externalConfigReloadPending = false;
+
+      if (hasUnsavedUiChanges()) {
+        const shouldContinue = confirm('检测到配置文件被外部修改。你有未保存更改，继续刷新会丢失当前未保存内容，是否继续？');
+        if (!shouldContinue) {
+          toast('检测到外部修改，已保留当前未保存内容', 'error');
+          continue;
+        }
+      }
+
+      const result = await reloadConfigWithRetry();
+      if (result.ok) {
+        toast('配置文件已被外部修改，已自动刷新');
+      } else {
+        toast('检测到外部修改，但自动刷新失败: ' + result.error, 'error');
+      }
+    } while (externalConfigReloadPending);
+  } finally {
+    externalConfigReloadInProgress = false;
+  }
 }
 
 function getAllModels() {
@@ -565,86 +667,214 @@ document.getElementById('btn-add-provider').addEventListener('click', () => open
 
 // ── Gateway Page ──
 
+function getGatewayActionText(action) {
+  if (action === 'start') return '启动';
+  if (action === 'stop') return '停止';
+  if (action === 'restart') return '重启';
+  return action;
+}
+
+const GATEWAY_STATUS_INITIAL_DELAY_MS = 1000;
+const GATEWAY_STATUS_POLL_INTERVAL_MS = 1500;
+const GATEWAY_STATUS_POLL_MAX_ATTEMPTS = 7;
+
+function getGatewayLogStatusText(status) {
+  if (status === 'success') return '成功';
+  if (status === 'error') return '失败';
+  return '执行中';
+}
+
+function formatGatewayLogTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function toGatewayLogText(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
+function renderGatewayLogs() {
+  const el = document.getElementById('gw-logs');
+  if (!el) return;
+  if (gatewayLogs.length === 0) {
+    el.innerHTML = '<span class="loading">暂无执行日志</span>';
+    return;
+  }
+
+  let html = '';
+  for (const log of gatewayLogs) {
+    const statusClass = log.status === 'success'
+      ? 'gw-log-tag-success'
+      : (log.status === 'error' ? 'gw-log-tag-error' : 'gw-log-tag-pending');
+    const stdoutText = toGatewayLogText(log.stdout);
+    const stderrText = toGatewayLogText(log.stderr);
+    const messageText = toGatewayLogText(log.message);
+    const commandText = toGatewayLogText(log.command);
+    const durationText = Number.isFinite(log.durationMs) ? `${log.durationMs} ms` : '';
+    const codeText = log.code === undefined || log.code === null ? '' : String(log.code);
+
+    html += `<div class="gw-log-entry">
+      <div class="gw-log-meta">
+        <span>${esc(formatGatewayLogTime(log.timestamp))}</span>
+        <span class="gw-log-tag ${statusClass}">${esc(getGatewayLogStatusText(log.status))}</span>
+        <span>${esc(log.actionText || '')}</span>
+        ${durationText ? `<span>耗时 ${esc(durationText)}</span>` : ''}
+        ${codeText ? `<span>退出码 ${esc(codeText)}</span>` : ''}
+      </div>
+      <div class="gw-log-block">
+        <div class="gw-log-label">命令</div>
+        <pre class="gw-log-pre">${esc(commandText)}</pre>
+      </div>
+      ${messageText ? `<div class="gw-log-block"><div class="gw-log-label">说明</div><pre class="gw-log-pre">${esc(messageText)}</pre></div>` : ''}
+      ${stdoutText ? `<div class="gw-log-block"><div class="gw-log-label">标准输出</div><pre class="gw-log-pre">${esc(stdoutText)}</pre></div>` : ''}
+      ${stderrText ? `<div class="gw-log-block"><div class="gw-log-label">错误输出</div><pre class="gw-log-pre">${esc(stderrText)}</pre></div>` : ''}
+    </div>`;
+  }
+
+  el.innerHTML = html;
+  el.scrollTop = el.scrollHeight;
+}
+
+function appendGatewayLog(log) {
+  gatewayLogs.push(log);
+  if (gatewayLogs.length > MAX_GATEWAY_LOGS) {
+    gatewayLogs.splice(0, gatewayLogs.length - MAX_GATEWAY_LOGS);
+  }
+  renderGatewayLogs();
+}
+
+function clearGatewayLogs() {
+  gatewayLogs.length = 0;
+  renderGatewayLogs();
+}
+
 async function refreshGatewayStatus() {
   const el = document.getElementById('gw-status');
+  const startBtn = document.getElementById('btn-gw-start');
+  const stopBtn = document.getElementById('btn-gw-stop');
+  const restartBtn = document.getElementById('btn-gw-restart');
+  const refreshBtn = document.getElementById('btn-gw-refresh');
+
+  if (!el || !startBtn || !stopBtn || !restartBtn || !refreshBtn) {
+    return false;
+  }
+
+  const refreshBtnOriginalHtml = refreshBtn.innerHTML;
+
   el.innerHTML = '<span class="loading">查询中...</span>';
-
-  const [statusRes, healthRes] = await Promise.all([
-    window.api.gateway.status(),
-    window.api.gateway.health(),
-  ]);
-
-  let statusData = null;
-  try { statusData = JSON.parse(statusRes.stdout); } catch {}
-
-  let healthData = null;
-  try { healthData = JSON.parse(healthRes.stdout); } catch {}
-
-  let running = false;
-  let statusHtml = '';
-
-  // 判断运行状态：优先从 service.runtime.status 判断，兼容旧格式
-  if (statusData) {
-    const runtimeStatus = statusData.service?.runtime?.status;
-    if (runtimeStatus === 'running') {
-      running = true;
-    } else if (statusData.rpc?.ok) {
-      // rpc 连通也说明网关在运行
-      running = true;
-    }
-  }
-  // 兜底：stdout 包含 running 文本
-  if (!running && statusRes.stdout?.includes('running')) {
-    running = true;
-  }
-  // 兜底：health 返回 ok
-  if (!running && healthData?.ok) {
-    running = true;
-  }
-
-  if (running) {
-    statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
-
-    // 从 status 中提取详细信息
-    const details = [];
-    const pid = statusData?.service?.runtime?.pid;
-    if (pid) details.push({ label: 'PID', value: String(pid) });
-    const port = statusData?.gateway?.port;
-    if (port) details.push({ label: '端口', value: String(port) });
-    const bind = statusData?.gateway?.bindHost;
-    if (bind) details.push({ label: '绑定', value: bind });
-
-    // 从 health 中提取 agent 和 channel 信息
-    if (healthData?.ok) {
-      const agentCount = healthData.agents?.length;
-      if (agentCount) details.push({ label: 'Agents', value: String(agentCount) });
-      const channelNames = healthData.channelOrder || Object.keys(healthData.channels || {});
-      if (channelNames.length) details.push({ label: 'Channels', value: channelNames.join(', ') });
-    }
-
-    if (details.length > 0) {
-      statusHtml += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:16px; font-size:13px">`;
-      for (const d of details) {
-        statusHtml += `<div><span style="color:var(--text-muted)">${esc(d.label)}:</span> ${esc(d.value)}</div>`;
-      }
-      statusHtml += `</div>`;
-    }
-  } else {
-    statusHtml = `<span class="badge badge-red"><i data-lucide="x" style="width:12px;height:12px"></i> 已停止</span>`;
-    // 如果有错误信息，显示出来帮助排查
-    if (statusRes.stderr) {
-      statusHtml += `<div style="margin-top:12px;font-size:12px;color:var(--danger)">${esc(statusRes.stderr)}</div>`;
-    }
-  }
-
-  el.innerHTML = statusHtml;
+  startBtn.disabled = true;
+  stopBtn.disabled = true;
+  restartBtn.disabled = true;
+  refreshBtn.disabled = true;
+  refreshBtn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px;height:14px"></i> 查询中';
   lucide.createIcons();
 
-  document.getElementById('btn-gw-start').disabled = running;
-  document.getElementById('btn-gw-stop').disabled = !running;
-  document.getElementById('btn-gw-restart').disabled = !running;
+  try {
+    const [statusRes, healthRes] = await Promise.all([
+      window.api.gateway.status(),
+      window.api.gateway.health(),
+    ]);
 
-  renderGatewayConfig();
+    let statusData = null;
+    try { statusData = JSON.parse(statusRes.stdout); } catch {}
+
+    let healthData = null;
+    try { healthData = JSON.parse(healthRes.stdout); } catch {}
+
+    let running = false;
+    let statusHtml = '';
+
+    if (statusData) {
+      const runtimeStatus = statusData.service?.runtime?.status;
+      if (runtimeStatus === 'running') {
+        running = true;
+      } else if (statusData.rpc?.ok) {
+        running = true;
+      }
+    }
+    if (!running && statusRes.stdout?.includes('running')) {
+      running = true;
+    }
+    if (!running && healthData?.ok) {
+      running = true;
+    }
+
+    if (running) {
+      statusHtml = `<span class="badge badge-green"><i data-lucide="check" style="width:12px;height:12px"></i> 运行中</span>`;
+
+      const details = [];
+      const pid = statusData?.service?.runtime?.pid;
+      if (pid) details.push({ label: 'PID', value: String(pid) });
+      const port = statusData?.gateway?.port;
+      if (port) details.push({ label: '端口', value: String(port) });
+      const bind = statusData?.gateway?.bindHost;
+      if (bind) details.push({ label: '绑定', value: bind });
+
+      if (healthData?.ok) {
+        const agentCount = healthData.agents?.length;
+        if (agentCount) details.push({ label: 'Agents', value: String(agentCount) });
+        const channelNames = healthData.channelOrder || Object.keys(healthData.channels || {});
+        if (channelNames.length) details.push({ label: 'Channels', value: channelNames.join(', ') });
+      }
+
+      if (details.length > 0) {
+        statusHtml += `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:16px; font-size:13px">`;
+        for (const d of details) {
+          statusHtml += `<div><span style="color:var(--text-muted)">${esc(d.label)}:</span> ${esc(d.value)}</div>`;
+        }
+        statusHtml += `</div>`;
+      }
+    } else {
+      statusHtml = `<span class="badge badge-red"><i data-lucide="x" style="width:12px;height:12px"></i> 已停止</span>`;
+      if (statusRes.stderr) {
+        statusHtml += `<div style="margin-top:12px;font-size:12px;color:var(--danger)">${esc(statusRes.stderr)}</div>`;
+      }
+    }
+
+    el.innerHTML = statusHtml;
+    lucide.createIcons();
+
+    startBtn.disabled = running;
+    stopBtn.disabled = !running;
+    restartBtn.disabled = !running;
+    return running;
+  } catch (e) {
+    el.innerHTML = `<span class="badge badge-red"><i data-lucide="alert-triangle" style="width:12px;height:12px"></i> 状态查询失败</span><div style="margin-top:12px;font-size:12px;color:var(--danger)">${esc(e?.message || '未知错误')}</div>`;
+    lucide.createIcons();
+    startBtn.disabled = true;
+    stopBtn.disabled = true;
+    restartBtn.disabled = true;
+    return false;
+  } finally {
+    refreshBtn.innerHTML = refreshBtnOriginalHtml;
+    refreshBtn.disabled = false;
+    lucide.createIcons();
+    renderGatewayConfig();
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitGatewayStatus(expectRunning) {
+  let attempts = 0;
+  let running = false;
+
+  await sleep(GATEWAY_STATUS_INITIAL_DELAY_MS);
+  while (attempts < GATEWAY_STATUS_POLL_MAX_ATTEMPTS) {
+    running = await refreshGatewayStatus();
+    attempts += 1;
+    if (running === expectRunning) {
+      return { ok: true, running, attempts };
+    }
+    if (attempts >= GATEWAY_STATUS_POLL_MAX_ATTEMPTS) break;
+    await sleep(GATEWAY_STATUS_POLL_INTERVAL_MS);
+  }
+
+  return { ok: false, running, attempts };
 }
 
 function renderGatewayConfig() {
@@ -666,57 +896,389 @@ async function gatewayAction(action, btnId) {
   btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px;height:14px"></i> 执行中';
   lucide.createIcons();
 
-  const wasRunning = !document.getElementById('btn-gw-start').disabled;
+  const actionText = getGatewayActionText(action);
   const expectRunning = action === 'start' || action === 'restart';
+  const fallbackCommand = `openclaw gateway ${action}`;
 
-  const res = await window.api.gateway[action]();
+  appendGatewayLog({
+    timestamp: new Date().toISOString(),
+    status: 'pending',
+    action,
+    actionText,
+    command: fallbackCommand,
+    message: `开始执行${actionText}操作`,
+  });
+
+  let triggerRes;
+  try {
+    triggerRes = await window.api.gateway[action]();
+  } catch (e) {
+    triggerRes = {
+      ok: false,
+      dispatched: false,
+      stderr: e?.message || '命令触发失败',
+      timestamp: new Date().toISOString(),
+      command: fallbackCommand,
+    };
+  }
+
+  appendGatewayLog({
+    timestamp: triggerRes.timestamp || new Date().toISOString(),
+    status: 'pending',
+    action,
+    actionText,
+    command: triggerRes.command || fallbackCommand,
+    code: triggerRes.code,
+    durationMs: typeof triggerRes.durationMs === 'number' ? triggerRes.durationMs : null,
+    stdout: triggerRes.stdout,
+    stderr: triggerRes.stderr,
+    message: triggerRes.dispatched === false
+      ? `命令触发异常（将继续仅依据状态判定）`
+      : `命令已触发（将仅依据状态判定）`,
+  });
+
+  const statusResult = await waitGatewayStatus(expectRunning);
+
   btn.innerHTML = origHtml;
   btn.disabled = false;
   lucide.createIcons();
 
-  if (res.ok) {
-    toast(`操作成功`);
+  appendGatewayLog({
+    timestamp: new Date().toISOString(),
+    status: statusResult.ok ? 'success' : 'error',
+    action,
+    actionText,
+    command: triggerRes.command || fallbackCommand,
+    message: statusResult.ok
+      ? `${actionText}后状态确认成功（第 ${statusResult.attempts} 次检查命中）`
+      : `${actionText}后状态未达到预期（共检查 ${statusResult.attempts} 次，当前${statusResult.running ? '运行中' : '已停止'}）`,
+    stderr: statusResult.ok ? '' : (triggerRes.stderr || ''),
+  });
+
+  if (statusResult.ok) {
+    toast('操作成功');
   } else {
-    toast(`失败: ${res.stderr || '未知错误'}`, 'error');
+    toast(`状态未达预期：当前${statusResult.running ? '运行中' : '已停止'}`, 'error');
+  }
+}
+
+// ── OpenClaw 日志页 ──
+
+function getLogSourceLabel(source) {
+  if (source === 'service-stdout') return '服务日志';
+  if (source === 'service-stderr') return '服务错误日志';
+  return 'Gateway 文件日志';
+}
+
+function getLogIntervalLabel(intervalMs) {
+  if (intervalMs === 10000) return '10s';
+  if (intervalMs === 30000) return '30s';
+  if (intervalMs === 60000) return '1min';
+  return `${Math.max(1, Math.round(intervalMs / 1000))}s`;
+}
+
+// 截断阈值
+const LOG_LINE_TRUNCATE_LEN = 500;
+
+/**
+ * 解析 tslog JSONL 格式的单行日志，返回可读文本。
+ * 格式：[HH:MM:SS] [LEVEL] [subsystem] 消息内容
+ */
+function formatTslogLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return '';
+  let obj;
+  try { obj = JSON.parse(trimmed); } catch { return trimmed; }
+  if (!obj || typeof obj !== 'object') return trimmed;
+
+  // 提取时间
+  const isoTime = obj.time || obj._meta?.date || '';
+  let timeTag = '';
+  if (isoTime) {
+    const d = new Date(isoTime);
+    if (!Number.isNaN(d.getTime())) {
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      timeTag = `${hh}:${mm}:${ss}`;
+    }
   }
 
-  // Poll until status changes or timeout (max 10s, interval 1.5s)
-  let attempts = 0;
-  const maxAttempts = 7;
-  const poll = async () => {
-    await refreshGatewayStatus();
-    attempts++;
-    const nowRunning = !document.getElementById('btn-gw-start').disabled;
-    if (nowRunning === expectRunning || attempts >= maxAttempts) return;
-    setTimeout(poll, 1500);
-  };
-  setTimeout(poll, 1000);
+  // 提取日志级别
+  const level = obj._meta?.logLevelName || '?';
+
+  // 提取子系统名称
+  let subsystem = '';
+  const rawName = obj._meta?.name || '';
+  if (rawName) {
+    try {
+      const parsed = JSON.parse(rawName);
+      if (parsed && typeof parsed === 'object' && parsed.subsystem) {
+        subsystem = parsed.subsystem;
+      } else {
+        subsystem = rawName;
+      }
+    } catch {
+      subsystem = rawName;
+    }
+  }
+
+  // 提取消息内容：数字键 "0","1","2"... 拼接
+  const parts = [];
+  for (let i = 0; ; i++) {
+    const key = String(i);
+    if (!(key in obj)) break;
+    const val = String(obj[key]);
+    // "0" 字段如果本身是 {"subsystem":"xxx"} 格式，跳过
+    if (i === 0) {
+      try {
+        const inner = JSON.parse(val);
+        if (inner && typeof inner === 'object' && inner.subsystem && Object.keys(inner).length === 1) {
+          continue; // 跳过，子系统已从 _meta.name 提取
+        }
+      } catch { /* 不是 JSON，正常使用 */ }
+    }
+    parts.push(val);
+  }
+
+  let message = parts.join(' ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // 超长消息截断
+  if (message.length > LOG_LINE_TRUNCATE_LEN) {
+    const totalLen = message.length;
+    message = message.slice(0, LOG_LINE_TRUNCATE_LEN) + `... (已截断，共 ${totalLen} 字符)`;
+  }
+
+  // 组装
+  const timePart = timeTag ? `[${timeTag}]` : '[--:--:--]';
+  const levelPart = `[${level}]`;
+  const subPart = subsystem ? `[${subsystem}]` : '';
+  return `${timePart} ${levelPart} ${subPart ? subPart + ' ' : ''}${message}`;
+}
+
+/**
+ * 将整段 JSONL 原始文本格式化为可读日志。
+ * 仅对 gateway-file 来源调用。
+ */
+function formatGatewayFileLog(rawText) {
+  if (!rawText) return '';
+  const lines = rawText.split('\n');
+  const formatted = [];
+  for (const line of lines) {
+    formatted.push(formatTslogLine(line));
+  }
+  return formatted.join('\n');
+}
+
+function formatLogSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '-';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isLogViewerAtBottom() {
+  const viewer = document.getElementById('oc-log-viewer');
+  if (!viewer) return true;
+  return viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 20;
+}
+
+function setLogMeta(text, type = 'normal') {
+  const el = document.getElementById('oc-log-meta');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = type === 'error' ? 'var(--danger)' : 'var(--text-muted)';
+}
+
+function replaceLogContent(text) {
+  const content = document.getElementById('oc-log-content');
+  const viewer = document.getElementById('oc-log-viewer');
+  if (!content || !viewer) return;
+  const display = logPageState.source === 'gateway-file' ? formatGatewayFileLog(text) : text;
+  content.textContent = display || LOG_PAGE_EMPTY_TEXT;
+  viewer.scrollTop = viewer.scrollHeight;
+}
+
+function appendLogContent(text, shouldAutoScroll) {
+  if (!text) return;
+  const content = document.getElementById('oc-log-content');
+  const viewer = document.getElementById('oc-log-viewer');
+  if (!content || !viewer) return;
+  if (content.textContent === LOG_PAGE_EMPTY_TEXT) {
+    content.textContent = '';
+  }
+  const display = logPageState.source === 'gateway-file' ? formatGatewayFileLog(text) : text;
+  content.textContent += display;
+  if (shouldAutoScroll) {
+    viewer.scrollTop = viewer.scrollHeight;
+  }
+}
+
+function stopOpenclawLogAutoRefresh() {
+  logPageState.active = false;
+  if (logPageState.timer) {
+    clearInterval(logPageState.timer);
+    logPageState.timer = null;
+  }
+}
+
+function startOpenclawLogAutoRefresh() {
+  if (logPageState.timer) {
+    clearInterval(logPageState.timer);
+    logPageState.timer = null;
+  }
+  if (!logPageState.active) return;
+  logPageState.timer = setInterval(() => {
+    refreshOpenclawLogs();
+  }, logPageState.intervalMs);
+}
+
+async function refreshOpenclawLogs({ reset = false, manual = false } = {}) {
+  if (logPageState.loading) return;
+
+  const refreshBtn = document.getElementById('btn-oc-log-refresh');
+  const sourceLabel = getLogSourceLabel(logPageState.source);
+
+  if (reset) {
+    logPageState.cursor = null;
+    logPageState.lastPath = '';
+    replaceLogContent('');
+  }
+
+  logPageState.loading = true;
+  const prevBtnHtml = refreshBtn ? refreshBtn.innerHTML : '';
+
+  if (manual && refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px;height:14px"></i> 刷新中';
+    lucide.createIcons();
+  }
+
+  try {
+    const wasAtBottom = isLogViewerAtBottom();
+    const res = await window.api.logs.read({
+      source: logPageState.source,
+      cursor: logPageState.cursor,
+      pathHint: logPageState.lastPath || null,
+      initialBytes: 240 * 1024,
+      appendBytes: 180 * 1024,
+    });
+
+    if (!res.ok) {
+      setLogMeta(`读取失败：${res.error || '未知错误'}`, 'error');
+      if (manual) toast(`日志读取失败：${res.error || '未知错误'}`, 'error');
+      return;
+    }
+
+    const data = res.data || {};
+    const pathChanged = !!(logPageState.lastPath && data.path && logPageState.lastPath !== data.path);
+    const shouldReplace = reset || pathChanged || data.resetCursor || logPageState.cursor === null;
+    const chunk = typeof data.content === 'string' ? data.content : '';
+
+    if (!data.exists) {
+      replaceLogContent('');
+      logPageState.cursor = typeof data.nextCursor === 'number' ? data.nextCursor : 0;
+      logPageState.lastPath = data.path || '';
+      const nowText = formatGatewayLogTime(new Date().toISOString());
+      setLogMeta(`来源：${sourceLabel} ｜ 文件不存在：${data.path || '(未知路径)'} ｜ 自动刷新：${getLogIntervalLabel(logPageState.intervalMs)} ｜ 上次刷新：${nowText}`, 'error');
+      return;
+    }
+
+    if (shouldReplace) {
+      const hints = [];
+      if (pathChanged) hints.push(`[日志文件切换] ${data.path}`);
+      if (!pathChanged && data.resetCursor) hints.push('[日志文件发生轮转或截断，已自动重新定位]');
+      if (data.truncatedHead) hints.push('[仅显示最近一段日志，较早内容已截断]');
+      const prefix = hints.length ? `${hints.join('\n')}\n\n` : '';
+      replaceLogContent(prefix + chunk);
+    } else if (chunk) {
+      appendLogContent(chunk, wasAtBottom);
+    }
+
+    const contentEl = document.getElementById('oc-log-content');
+    if (contentEl && !contentEl.textContent) {
+      contentEl.textContent = LOG_PAGE_EMPTY_TEXT;
+    }
+
+    logPageState.cursor = typeof data.nextCursor === 'number' ? data.nextCursor : logPageState.cursor;
+    logPageState.lastPath = data.path || logPageState.lastPath;
+
+    const updatedText = data.updatedAt ? formatGatewayLogTime(data.updatedAt) : formatGatewayLogTime(new Date().toISOString());
+    setLogMeta(`来源：${sourceLabel} ｜ 文件：${data.path || '(未知路径)'} ｜ 大小：${formatLogSize(data.size)} ｜ 自动刷新：${getLogIntervalLabel(logPageState.intervalMs)} ｜ 上次刷新：${updatedText}`);
+  } catch (e) {
+    setLogMeta(`读取失败：${e.message}`, 'error');
+    if (manual) toast(`日志读取失败：${e.message}`, 'error');
+  } finally {
+    logPageState.loading = false;
+    if (manual && refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.innerHTML = prevBtnHtml;
+      lucide.createIcons();
+    }
+  }
+}
+
+function initOpenclawLogsPage() {
+  const sourceEl = document.getElementById('oc-log-source');
+  const intervalEl = document.getElementById('oc-log-interval');
+  const refreshBtn = document.getElementById('btn-oc-log-refresh');
+  const clearBtn = document.getElementById('btn-oc-log-clear');
+  if (!sourceEl || !intervalEl || !refreshBtn || !clearBtn) return;
+
+  if (!logPageState.initialized) {
+    sourceEl.value = logPageState.source;
+    intervalEl.value = String(logPageState.intervalMs);
+
+    sourceEl.addEventListener('change', () => {
+      logPageState.source = sourceEl.value;
+      logPageState.cursor = null;
+      logPageState.lastPath = '';
+      refreshOpenclawLogs({ reset: true, manual: true });
+    });
+
+    intervalEl.addEventListener('change', () => {
+      const val = Number(intervalEl.value);
+      if (Number.isFinite(val) && val > 0) {
+        logPageState.intervalMs = val;
+        startOpenclawLogAutoRefresh();
+        refreshOpenclawLogs();
+      }
+    });
+
+    refreshBtn.addEventListener('click', () => refreshOpenclawLogs({ manual: true }));
+
+    clearBtn.addEventListener('click', () => {
+      replaceLogContent('');
+      toast('已清空日志显示');
+    });
+
+    logPageState.initialized = true;
+  }
+
+  logPageState.active = true;
+  startOpenclawLogAutoRefresh();
+  refreshOpenclawLogs();
 }
 
 document.getElementById('btn-gw-start').addEventListener('click', () => gatewayAction('start', 'btn-gw-start'));
 document.getElementById('btn-gw-stop').addEventListener('click', () => gatewayAction('stop', 'btn-gw-stop'));
 document.getElementById('btn-gw-restart').addEventListener('click', () => gatewayAction('restart', 'btn-gw-restart'));
 document.getElementById('btn-gw-refresh').addEventListener('click', refreshGatewayStatus);
+document.getElementById('btn-gw-log-clear').addEventListener('click', () => {
+  clearGatewayLogs();
+  toast('网关执行日志已清空');
+});
+renderGatewayLogs();
 
 // ── Init ──
 loadConfig();
 
 // ── Reload on external config change ──
 window.api.config.onChanged(() => {
-  loadConfig();
-  toast('配置文件已被外部修改，已自动刷新');
+  handleExternalConfigChanged();
 });
 
 // ── Workspace Editor ──
-
-let wsState = {
-  currentAgent: null,
-  currentFile: null,
-  files: [],
-  originalContent: '',
-  dirty: false,
-  initialized: false,
-};
 
 function getAgentWorkspace(agentId) {
   if (agentId) {

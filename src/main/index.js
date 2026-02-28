@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain, session, Tray, Menu, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { execFile, spawnSync } = require('child_process');
+const { execFile, spawn, spawnSync } = require('child_process');
 
 const CONFIG_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'openclaw.json');
+const CONFIG_DIR = path.dirname(CONFIG_PATH);
+const CONFIG_FILE_NAME = path.basename(CONFIG_PATH);
 
 function uniqueStrings(values) {
   const seen = new Set();
@@ -45,6 +47,137 @@ function getNvmBinDirs(homePath) {
       .map((entry) => path.join(nvmNodeDir, entry.name, 'bin'));
   } catch {
     return [];
+  }
+}
+
+function shellQuoteArg(value) {
+  const text = String(value ?? '');
+  if (!text) return "''";
+  if (/^[A-Za-z0-9_/:=+.-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function toCommandString(executable, args) {
+  return [executable, ...args].map(shellQuoteArg).join(' ');
+}
+
+const LOG_SOURCE_GATEWAY_FILE = 'gateway-file';
+const LOG_SOURCE_SERVICE_STDOUT = 'service-stdout';
+const LOG_SOURCE_SERVICE_STDERR = 'service-stderr';
+const DEFAULT_LOG_INITIAL_BYTES = 240 * 1024;
+const DEFAULT_LOG_APPEND_BYTES = 180 * 1024;
+const MAX_LOG_READ_BYTES = 2 * 1024 * 1024;
+
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  const int = Math.floor(num);
+  if (int < min) return min;
+  if (int > max) return max;
+  return int;
+}
+
+function resolveHomePath(inputPath) {
+  if (typeof inputPath !== 'string') return '';
+  const trimmed = inputPath.trim();
+  if (!trimmed) return '';
+  const userHome = process.env.HOME || process.env.USERPROFILE || '';
+  if (!userHome) return trimmed;
+  if (trimmed === '~') return userHome;
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(userHome, trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function formatDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function extractLoggingFileFromRaw(raw) {
+  if (typeof raw !== 'string') return null;
+  const loggingStart = raw.search(/["']?logging["']?\s*:/);
+  if (loggingStart < 0) return null;
+  const segment = raw.slice(loggingStart, loggingStart + 8000);
+  const match = segment.match(/["']?file["']?\s*:\s*["']([^"']+)["']/);
+  if (!match || !match[1]) return null;
+  return match[1].trim();
+}
+
+function getStateDirPath() {
+  const envState = resolveHomePath(process.env.OPENCLAW_STATE_DIR || '');
+  if (envState) return path.resolve(envState);
+  return CONFIG_DIR;
+}
+
+async function findLatestGatewayDailyLogFile() {
+  const logDir = path.join('/tmp', 'openclaw');
+  try {
+    const entries = await fs.promises.readdir(logDir, { withFileTypes: true });
+    const files = entries
+      .filter((entry) => entry.isFile() && /^openclaw-\d{4}-\d{2}-\d{2}\.log$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    if (files.length === 0) return null;
+    return path.join(logDir, files[files.length - 1]);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveGatewayFileLogPath() {
+  let configuredPath = null;
+  try {
+    const raw = await fs.promises.readFile(CONFIG_PATH, 'utf-8');
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.logging?.file === 'string' && parsed.logging.file.trim()) {
+        configuredPath = parsed.logging.file.trim();
+      }
+    } catch {
+      const extracted = extractLoggingFileFromRaw(raw);
+      if (extracted) configuredPath = extracted;
+    }
+  } catch {
+    // ignore config read failures, fallback to default log path
+  }
+
+  if (configuredPath) {
+    return path.resolve(resolveHomePath(configuredPath));
+  }
+
+  const todayPath = path.join('/tmp', 'openclaw', `openclaw-${formatDateStamp()}.log`);
+  try {
+    await fs.promises.access(todayPath);
+    return todayPath;
+  } catch {
+    const latestPath = await findLatestGatewayDailyLogFile();
+    return latestPath || todayPath;
+  }
+}
+
+async function resolveLogSourcePath(source) {
+  if (source === LOG_SOURCE_SERVICE_STDOUT) {
+    return path.join(getStateDirPath(), 'logs', 'gateway.log');
+  }
+  if (source === LOG_SOURCE_SERVICE_STDERR) {
+    return path.join(getStateDirPath(), 'logs', 'gateway.err.log');
+  }
+  return resolveGatewayFileLogPath();
+}
+
+async function readUtf8Slice(filePath, start, length) {
+  if (length <= 0) return '';
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
+    return buffer.slice(0, bytesRead).toString('utf-8');
+  } finally {
+    await handle.close();
   }
 }
 
@@ -103,6 +236,68 @@ const PREFS_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.open
 
 let mainWindow;
 let tray = null;
+let configWatchDebounce = null;
+let configDirWatcher = null;
+
+function isConfigRelatedFilename(filename) {
+  if (typeof filename !== 'string' || !filename.trim()) return true;
+  const base = path.basename(filename);
+  return base === CONFIG_FILE_NAME || base === `${CONFIG_FILE_NAME}.tmp`;
+}
+
+function emitConfigChanged() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('config:changed');
+  }
+}
+
+function scheduleConfigChangedEmit() {
+  clearTimeout(configWatchDebounce);
+  configWatchDebounce = setTimeout(emitConfigChanged, 400);
+}
+
+function startConfigWatchers() {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  } catch (err) {
+    console.warn('[config-watch] 配置目录创建失败:', err.message);
+  }
+
+  try {
+    configDirWatcher = fs.watch(CONFIG_DIR, (_eventType, filename) => {
+      if (isConfigRelatedFilename(filename)) {
+        scheduleConfigChangedEmit();
+      }
+    });
+    configDirWatcher.on('error', (err) => {
+      console.warn('[config-watch] 目录监听异常:', err.message);
+    });
+  } catch (err) {
+    console.warn('[config-watch] 目录监听创建失败:', err.message);
+  }
+
+  fs.watchFile(CONFIG_PATH, { interval: 600 }, (curr, prev) => {
+    const changed = curr.mtimeMs !== prev.mtimeMs
+      || curr.size !== prev.size
+      || curr.ino !== prev.ino
+      || curr.nlink !== prev.nlink;
+    if (changed) {
+      scheduleConfigChangedEmit();
+    }
+  });
+}
+
+function stopConfigWatchers() {
+  clearTimeout(configWatchDebounce);
+  configWatchDebounce = null;
+
+  if (configDirWatcher) {
+    configDirWatcher.close();
+    configDirWatcher = null;
+  }
+
+  fs.unwatchFile(CONFIG_PATH);
+}
 
 function getCloseBehavior() {
   try {
@@ -268,25 +463,14 @@ app.whenReady().then(() => {
   });
   createWindow();
   createTray();
-
-  // Watch config file for external changes
-  let watchDebounce = null;
-  fs.watch(path.dirname(CONFIG_PATH), (eventType, filename) => {
-    if (filename === path.basename(CONFIG_PATH)) {
-      clearTimeout(watchDebounce);
-      watchDebounce = setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('config:changed');
-        }
-      }, 500);
-    }
-  });
+  startConfigWatchers();
 });
 app.on('window-all-closed', () => {
   // 不退出，保持托盘运行
 });
 app.on('before-quit', () => {
   app.isQuitting = true;
+  stopConfigWatchers();
 });
 
 // ── Config read/write ──
@@ -302,6 +486,7 @@ ipcMain.handle('config:read', async () => {
 
 ipcMain.handle('config:write', async (_ev, json) => {
   try {
+    await fs.promises.mkdir(CONFIG_DIR, { recursive: true });
     const tmpPath = CONFIG_PATH + '.tmp';
     const content = JSON.stringify(json, null, 2);
     await fs.promises.writeFile(tmpPath, content, 'utf-8');
@@ -316,31 +501,196 @@ ipcMain.handle('config:write', async (_ev, json) => {
 
 function runOpenclaw(args) {
   return new Promise((resolve) => {
-    execFile(openclawPath || 'openclaw', args, {
+    const executable = openclawPath || 'openclaw';
+    const command = toCommandString(executable, args);
+    const startedAt = Date.now();
+
+    execFile(executable, args, {
       timeout: 30000,
       env: { ...process.env, PATH: userPath },
       windowsHide: true,
     }, (err, stdout, stderr) => {
+      const durationMs = Date.now() - startedAt;
       const stdoutText = stdout?.trim();
       let stderrText = stderr?.trim();
       if (err && err.code === 'ENOENT' && !stderrText) {
         const notesText = resolveNotes.length ? `（${resolveNotes.join('；')}）` : '';
         stderrText = `openclaw 命令不可用${notesText}`;
       }
-      resolve({ ok: !err, stdout: stdoutText, stderr: stderrText, code: err?.code });
+      resolve({
+        ok: !err,
+        stdout: stdoutText,
+        stderr: stderrText,
+        code: err ? err.code : 0,
+        command,
+        timestamp: new Date(startedAt).toISOString(),
+        durationMs,
+      });
     });
+  });
+}
+
+function runOpenclawDetached(args) {
+  return new Promise((resolve) => {
+    const executable = openclawPath || 'openclaw';
+    const command = toCommandString(executable, args);
+    const startedAt = Date.now();
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        ...result,
+        command,
+        timestamp: new Date(startedAt).toISOString(),
+        durationMs: Date.now() - startedAt,
+      });
+    };
+
+    const unavailableMessage = () => {
+      const notesText = resolveNotes.length ? `（${resolveNotes.join('；')}）` : '';
+      return `openclaw 命令不可用${notesText}`;
+    };
+
+    try {
+      const child = spawn(executable, args, {
+        env: { ...process.env, PATH: userPath },
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+
+      child.once('error', (err) => {
+        const stderrText = err?.code === 'ENOENT' ? unavailableMessage() : (err?.message || '命令触发失败');
+        finish({
+          ok: false,
+          dispatched: false,
+          stdout: '',
+          stderr: stderrText,
+          code: err?.code || 1,
+          pid: null,
+        });
+      });
+
+      child.once('spawn', () => {
+        child.unref();
+        finish({
+          ok: true,
+          dispatched: true,
+          stdout: '',
+          stderr: '',
+          code: 0,
+          pid: child.pid,
+        });
+      });
+    } catch (err) {
+      const stderrText = err?.code === 'ENOENT' ? unavailableMessage() : (err?.message || '命令触发失败');
+      finish({
+        ok: false,
+        dispatched: false,
+        stdout: '',
+        stderr: stderrText,
+        code: err?.code || 1,
+        pid: null,
+      });
+    }
   });
 }
 
 ipcMain.handle('gateway:status', () => runOpenclaw(['gateway', 'status', '--json']));
 
-ipcMain.handle('gateway:start', () => runOpenclaw(['gateway', 'start']));
+ipcMain.handle('gateway:start', () => runOpenclawDetached(['gateway', 'start']));
 
-ipcMain.handle('gateway:stop', () => runOpenclaw(['gateway', 'stop']));
+ipcMain.handle('gateway:stop', () => runOpenclawDetached(['gateway', 'stop']));
 
-ipcMain.handle('gateway:restart', () => runOpenclaw(['gateway', 'restart']));
+ipcMain.handle('gateway:restart', () => runOpenclawDetached(['gateway', 'restart']));
 
 ipcMain.handle('gateway:health', () => runOpenclaw(['gateway', 'health', '--json']));
+
+// ── OpenClaw log files ──
+
+ipcMain.handle('logs:read', async (_ev, options = {}) => {
+  try {
+    const source = typeof options.source === 'string' ? options.source : LOG_SOURCE_GATEWAY_FILE;
+    const initialBytes = clampNumber(options.initialBytes, 32 * 1024, MAX_LOG_READ_BYTES, DEFAULT_LOG_INITIAL_BYTES);
+    const appendBytes = clampNumber(options.appendBytes, 8 * 1024, MAX_LOG_READ_BYTES, DEFAULT_LOG_APPEND_BYTES);
+    const filePath = await resolveLogSourcePath(source);
+    const pathHint = typeof options.pathHint === 'string' ? options.pathHint : '';
+    const ignoreCursor = !!(pathHint && pathHint !== filePath);
+    const hasCursor = !ignoreCursor && options.cursor !== undefined && options.cursor !== null && options.cursor !== '';
+    const cursorValue = hasCursor ? Number(options.cursor) : null;
+    const cursor = Number.isFinite(cursorValue) && cursorValue >= 0 ? Math.floor(cursorValue) : null;
+
+    let stats;
+    try {
+      stats = await fs.promises.stat(filePath);
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        return {
+          ok: true,
+          data: {
+            source,
+            path: filePath,
+            exists: false,
+            size: 0,
+            updatedAt: null,
+            content: '',
+            nextCursor: 0,
+            resetCursor: hasCursor || ignoreCursor,
+            truncatedHead: false,
+          },
+        };
+      }
+      throw e;
+    }
+
+    if (!stats.isFile()) {
+      return { ok: false, error: '日志路径不是文件' };
+    }
+
+    const fileSize = stats.size;
+    let start = cursor === null ? Math.max(0, fileSize - initialBytes) : cursor;
+    let resetCursor = false;
+    let truncatedHead = false;
+
+    if (cursor !== null && start > fileSize) {
+      start = Math.max(0, fileSize - appendBytes);
+      resetCursor = true;
+      truncatedHead = start > 0;
+    }
+
+    const pendingBytes = fileSize - start;
+    if (cursor !== null && pendingBytes > appendBytes) {
+      start = Math.max(0, fileSize - appendBytes);
+      resetCursor = true;
+      truncatedHead = start > 0;
+    }
+
+    if (cursor === null && start > 0) {
+      truncatedHead = true;
+    }
+
+    const contentLength = Math.max(0, fileSize - start);
+    const content = await readUtf8Slice(filePath, start, contentLength);
+
+    return {
+      ok: true,
+      data: {
+        source,
+        path: filePath,
+        exists: true,
+        size: fileSize,
+        updatedAt: stats.mtime.toISOString(),
+        content,
+        nextCursor: fileSize,
+        resetCursor,
+        truncatedHead,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 
 // ── Workspace files ──
 
@@ -350,15 +700,31 @@ function isPathInside(child, parent) {
   return resolved.startsWith(resolvedParent) || resolved === path.resolve(parent);
 }
 
+function normalizeWorkspacePath(workspacePath) {
+  if (typeof workspacePath !== 'string') return null;
+  const trimmed = workspacePath.trim();
+  if (!trimmed) return null;
+
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  if (homeDir && trimmed === '~') {
+    return path.resolve(homeDir);
+  }
+  if (homeDir && (trimmed.startsWith('~/') || trimmed.startsWith('~\\'))) {
+    return path.resolve(path.join(homeDir, trimmed.slice(2)));
+  }
+  return path.resolve(trimmed);
+}
+
 ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
   try {
-    if (!workspacePath) {
+    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+    if (!normalizedWorkspacePath) {
       return { ok: false, error: '工作区路径不存在' };
     }
-    try { await fs.promises.access(workspacePath); } catch {
+    try { await fs.promises.access(normalizedWorkspacePath); } catch {
       return { ok: false, error: '工作区路径不存在' };
     }
-    const entries = await fs.promises.readdir(workspacePath, { withFileTypes: true });
+    const entries = await fs.promises.readdir(normalizedWorkspacePath, { withFileTypes: true });
     const files = entries
       .filter(e => e.isFile() && e.name.endsWith('.md'))
       .map(e => e.name)
@@ -371,8 +737,12 @@ ipcMain.handle('workspace:listFiles', async (_ev, workspacePath) => {
 
 ipcMain.handle('workspace:readFile', async (_ev, workspacePath, fileName) => {
   try {
-    const filePath = path.join(workspacePath, fileName);
-    if (!isPathInside(filePath, workspacePath)) {
+    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+    if (!normalizedWorkspacePath) {
+      return { ok: false, error: '工作区路径不存在' };
+    }
+    const filePath = path.join(normalizedWorkspacePath, fileName);
+    if (!isPathInside(filePath, normalizedWorkspacePath)) {
       return { ok: false, error: '路径越界，拒绝访问' };
     }
     const content = await fs.promises.readFile(filePath, 'utf-8');
@@ -384,8 +754,12 @@ ipcMain.handle('workspace:readFile', async (_ev, workspacePath, fileName) => {
 
 ipcMain.handle('workspace:writeFile', async (_ev, workspacePath, fileName, content) => {
   try {
-    const filePath = path.join(workspacePath, fileName);
-    if (!isPathInside(filePath, workspacePath)) {
+    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+    if (!normalizedWorkspacePath) {
+      return { ok: false, error: '工作区路径不存在' };
+    }
+    const filePath = path.join(normalizedWorkspacePath, fileName);
+    if (!isPathInside(filePath, normalizedWorkspacePath)) {
       return { ok: false, error: '路径越界，拒绝访问' };
     }
     await fs.promises.writeFile(filePath, content, 'utf-8');
