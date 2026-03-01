@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('api', {
     restart: () => ipcRenderer.invoke('gateway:restart'),
     health: () => ipcRenderer.invoke('gateway:health'),
   },
+  agents: {
+    add: (payload) => ipcRenderer.invoke('agents:add', payload),
+  },
   models: {
     fetch: (opts) => ipcRenderer.invoke('models:fetch', opts),
   },

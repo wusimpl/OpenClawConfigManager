@@ -595,6 +595,31 @@ function runOpenclawDetached(args) {
 
 ipcMain.handle('gateway:status', () => runOpenclaw(['gateway', 'status', '--json']));
 
+ipcMain.handle('agents:add', async (_ev, payload = {}) => {
+  const agentId = typeof payload?.agentId === 'string' ? payload.agentId.trim() : '';
+  const workspaceInput = typeof payload?.workspace === 'string' ? payload.workspace.trim() : '';
+
+  if (!agentId) {
+    return { ok: false, error: 'Agent ID 不能为空' };
+  }
+
+  const args = ['agents', 'add', agentId];
+  if (workspaceInput) {
+    args.push('--workspace', resolveHomePath(workspaceInput));
+  }
+
+  const result = await runOpenclaw(args);
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.stderr || result.stdout || '执行 openclaw agents add 失败',
+      detail: result,
+    };
+  }
+
+  return { ok: true, result };
+});
+
 ipcMain.handle('gateway:start', () => runOpenclawDetached(['gateway', 'start']));
 
 ipcMain.handle('gateway:stop', () => runOpenclawDetached(['gateway', 'stop']));

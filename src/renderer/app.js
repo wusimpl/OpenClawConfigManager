@@ -215,6 +215,141 @@ function getDefaultModel() {
   return d.primary || null;
 }
 
+const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+function getDefaultWorkspaceForAgent(agentId) {
+  const id = String(agentId || '').trim();
+  return id ? `~/.openclaw/workspace-${id}` : '~/.openclaw/workspace-';
+}
+
+async function updateAgentName(agentId, name) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return { ok: true };
+
+  const readRes = await window.api.config.read();
+  if (!readRes.ok) {
+    return { ok: false, error: readRes.error || '读取配置失败' };
+  }
+
+  const nextConfig = readRes.data || {};
+  if (!nextConfig.agents) nextConfig.agents = {};
+  if (!Array.isArray(nextConfig.agents.list)) nextConfig.agents.list = [];
+
+  const target = nextConfig.agents.list.find(a => a.id === agentId);
+  if (!target) {
+    return { ok: false, error: `未找到 Agent "${agentId}"` };
+  }
+
+  target.name = trimmedName;
+  const writeRes = await window.api.config.write(nextConfig);
+  if (!writeRes.ok) {
+    return { ok: false, error: writeRes.error || '保存名称失败' };
+  }
+
+  return { ok: true };
+}
+
+function openAddAgentEditor() {
+  if (!config) {
+    toast('配置尚未加载完成', 'error');
+    return;
+  }
+
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">新建 Agent</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Agent ID <span style="color:var(--danger)">*</span></label>
+      <input class="form-input" id="ba-id" style="width:100%" placeholder="如: work">
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px">仅允许字母、数字、下划线、连字符，且不能以符号开头。</div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">显示名称（可选）</label>
+      <input class="form-input" id="ba-name" style="width:100%" placeholder="如: Work Assistant">
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">Workspace <span style="color:var(--danger)">*</span></label>
+      <input class="form-input" id="ba-workspace" style="width:100%" placeholder="~/.openclaw/workspace-work">
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px">默认会根据 Agent ID 自动生成，可手动修改。</div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="ba-cancel">取消</button>
+      <button class="btn btn-primary" id="ba-save">创建</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  const idInput = overlay.querySelector('#ba-id');
+  const nameInput = overlay.querySelector('#ba-name');
+  const workspaceInput = overlay.querySelector('#ba-workspace');
+  const cancelBtn = overlay.querySelector('#ba-cancel');
+  const saveBtn = overlay.querySelector('#ba-save');
+  let workspaceEdited = false;
+
+  const syncWorkspace = () => {
+    if (workspaceEdited) return;
+    workspaceInput.value = getDefaultWorkspaceForAgent(idInput.value);
+  };
+
+  syncWorkspace();
+  idInput.addEventListener('input', syncWorkspace);
+  workspaceInput.addEventListener('input', () => { workspaceEdited = true; });
+  cancelBtn.addEventListener('click', () => closeModal(overlay));
+  saveBtn.addEventListener('click', async () => {
+    const agentId = idInput.value.trim();
+    const agentName = nameInput.value.trim();
+    const workspace = workspaceInput.value.trim();
+
+    if (!agentId) {
+      toast('请输入 Agent ID', 'error');
+      return;
+    }
+    if (!AGENT_ID_PATTERN.test(agentId)) {
+      toast('Agent ID 格式不合法', 'error');
+      return;
+    }
+    const duplicate = (config.agents?.list || []).some(a => String(a.id || '').toLowerCase() === agentId.toLowerCase());
+    if (duplicate) {
+      toast(`Agent "${agentId}" 已存在`, 'error');
+      return;
+    }
+    if (!workspace) {
+      toast('请输入 Workspace 路径', 'error');
+      return;
+    }
+
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true;
+    saveBtn.textContent = '创建中...';
+
+    const addRes = await window.api.agents.add({ agentId, workspace });
+    if (!addRes.ok) {
+      saveBtn.disabled = false;
+      cancelBtn.disabled = false;
+      saveBtn.textContent = '创建';
+      toast('创建失败: ' + (addRes.error || '未知错误'), 'error');
+      return;
+    }
+
+    let nameError = null;
+    if (agentName) {
+      const nameRes = await updateAgentName(agentId, agentName);
+      if (!nameRes.ok) nameError = nameRes.error || '保存名称失败';
+    }
+
+    closeModal(overlay);
+    const reloadRes = await loadConfig({ showLoadingError: false, syncActivePage: true });
+    if (!reloadRes.ok) {
+      toast(`Agent "${agentId}" 已创建，但刷新页面失败`, 'error');
+      return;
+    }
+
+    if (nameError) {
+      toast(`Agent "${agentId}" 已创建，但名称保存失败: ${nameError}`, 'error');
+      return;
+    }
+
+    toast(`Agent "${agentId}" 已创建`);
+  });
+}
+
 function renderAgents() {
   const container = document.getElementById('agents-list');
   const agents = config.agents?.list || [];
@@ -222,7 +357,13 @@ function renderAgents() {
   const defaultModel = getDefaultModel();
 
   if (agents.length === 0) {
-    container.innerHTML = '<div class="card"><p style="color:var(--text-muted)">没有配置 agent</p></div>';
+    container.innerHTML = `<div class="card">
+      <p style="color:var(--text-muted);margin-bottom:14px">没有配置 agent</p>
+      <button class="btn btn-primary" id="btn-empty-add-agent"><i data-lucide="plus"></i> 立即创建 Agent</button>
+    </div>`;
+    const createBtn = container.querySelector('#btn-empty-add-agent');
+    if (createBtn) createBtn.addEventListener('click', openAddAgentEditor);
+    lucide.createIcons();
     return;
   }
 
@@ -1405,6 +1546,7 @@ document.getElementById('btn-gw-start').addEventListener('click', () => gatewayA
 document.getElementById('btn-gw-stop').addEventListener('click', () => gatewayAction('stop', 'btn-gw-stop'));
 document.getElementById('btn-gw-restart').addEventListener('click', () => gatewayAction('restart', 'btn-gw-restart'));
 document.getElementById('btn-gw-refresh').addEventListener('click', refreshGatewayStatus);
+document.getElementById('btn-add-agent').addEventListener('click', openAddAgentEditor);
 document.getElementById('btn-gw-log-clear').addEventListener('click', () => {
   clearGatewayLogs();
   toast('网关执行日志已清空');
