@@ -452,8 +452,8 @@ function createTray() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 960,
-    height: 700,
+    width: 1300,
+    height: 850,
     title: 'OpenClaw 管理器',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

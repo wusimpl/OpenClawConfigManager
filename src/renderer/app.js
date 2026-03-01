@@ -3026,19 +3026,20 @@ function buildSkillCardHtml(skill) {
   };
   const sourceLabel = sourceLabels[skill.source] || skill.source || '';
 
-  return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#18181b;border:1px solid var(--border);border-radius:8px">
-    <span style="font-size:20px;flex-shrink:0;width:28px;text-align:center">${skill.emoji || '📦'}</span>
-    <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-family:monospace;font-size:13px;font-weight:600;color:var(--text)">${esc(skill.name)}</span>
+  return `<div class="sk-card-row">
+    <span class="sk-card-emoji">${skill.emoji || '📦'}</span>
+    <div class="sk-card-main">
+      <div class="sk-card-head">
+        <span class="sk-card-name">${esc(skill.name)}</span>
         <span style="font-size:10px;color:var(--text-muted);background:#27272a;padding:1px 6px;border-radius:4px">${esc(sourceLabel)}</span>
         ${statusHtml}
         ${hasConfig ? '<span style="font-size:10px;color:var(--primary);background:rgba(59,130,246,0.1);padding:1px 6px;border-radius:4px">已配置</span>' : ''}
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(skill.description || '')}</div>
+      <div class="sk-card-desc" title="${esc(skill.description || '')}">${esc(skill.description || '')}</div>
       ${missingHtml}
     </div>
-    <div style="display:flex;gap:6px;flex-shrink:0">
+    <div class="sk-card-actions">
+      <button class="btn btn-secondary sk-detail-btn" data-skill="${esc(skill.name)}" style="padding:4px 10px;font-size:11px">详情</button>
       ${isDisabled
         ? `<button class="btn btn-primary sk-toggle-btn" data-skill="${esc(skill.name)}" data-action="enable" style="padding:4px 10px;font-size:11px">启用</button>`
         : `<button class="btn btn-danger sk-toggle-btn" data-skill="${esc(skill.name)}" data-action="disable" style="padding:4px 10px;font-size:11px">禁用</button>`}
@@ -3050,12 +3051,51 @@ function buildSkillCardHtml(skill) {
 // ── 绑定卡片事件 ──
 
 function bindSkillCardEvents(container) {
+  container.querySelectorAll('.sk-detail-btn').forEach(btn => {
+    btn.addEventListener('click', () => openSkillDescriptionDialog(btn.dataset.skill));
+  });
   container.querySelectorAll('.sk-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => toggleSkillEnabled(btn.dataset.skill, btn.dataset.action));
   });
   container.querySelectorAll('.sk-config-btn').forEach(btn => {
     btn.addEventListener('click', () => openSkillConfigDialog(btn.dataset.skill));
   });
+}
+
+function findSkillByName(skillName) {
+  if (!skillsCache || !skillName) return null;
+  for (const group of Object.values(skillsCache)) {
+    if (!Array.isArray(group)) continue;
+    const found = group.find(skill => skill?.name === skillName);
+    if (found) return found;
+  }
+  return null;
+}
+
+function openSkillDescriptionDialog(skillName) {
+  const skill = findSkillByName(skillName);
+  const description = (skill?.description || '').trim();
+  const sourceLabels = {
+    'openclaw-bundled': 'Bundled',
+    'openclaw-managed': '全局',
+    'openclaw-workspace': '工作区',
+    'agents-skills-personal': '个人',
+  };
+  const sourceLabel = sourceLabels[skill?.source] || skill?.source || '未知来源';
+  const overlay = showModal(`
+    <h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:8px">
+      Skill 详情: ${esc(skillName || '未知')}
+    </h3>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">来源：${esc(sourceLabel)}</div>
+    <div style="font-size:13px;line-height:1.7;color:var(--text);background:#09090b;border:1px solid var(--border);border-radius:10px;padding:14px;white-space:pre-wrap;word-break:break-word;max-height:55vh;overflow:auto">
+      ${esc(description || '暂无描述')}
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-secondary" id="sk-detail-close">关闭</button>
+    </div>
+  `);
+  overlay.querySelector('.modal').style.maxWidth = '760px';
+  overlay.querySelector('#sk-detail-close').addEventListener('click', () => closeModal(overlay));
 }
 
 // ── 启用/禁用 skill ──

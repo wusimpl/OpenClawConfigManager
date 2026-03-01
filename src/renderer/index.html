@@ -76,6 +76,7 @@
     .main { 
       flex: 1; 
       overflow-y: auto; 
+      overflow-x: hidden;
       padding: 40px 48px; 
       position: relative;
       scroll-behavior: smooth;
@@ -394,6 +395,70 @@
     }
     .sk-tab:hover { border-color: var(--border-hover); color: var(--text); }
     .sk-tab.active { background: #27272a; color: var(--primary); border-color: var(--primary); }
+    .sk-card-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #18181b;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .sk-card-emoji {
+      font-size: 20px;
+      width: 28px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .sk-card-main {
+      min-width: 0;
+      overflow: hidden;
+    }
+    .sk-card-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .sk-card-name {
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sk-card-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sk-card-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    @media (max-width: 960px) {
+      .main { padding: 24px 20px; }
+      .sk-card-row {
+        grid-template-columns: 28px minmax(0, 1fr);
+        align-items: start;
+      }
+      .sk-card-actions {
+        grid-column: 2;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+    }
 
     /* Fallback 模型列表 */
     .fb-list { margin-top: 12px; }
