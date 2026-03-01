@@ -34,4 +34,11 @@ contextBridge.exposeInMainWorld('api', {
     listBundled: () => ipcRenderer.invoke('skills:listBundled'),
     listAll: () => ipcRenderer.invoke('skills:listAll'),
   },
+  sessions: {
+    listAgents: () => ipcRenderer.invoke('sessions:listAgents'),
+    list: (agentId) => ipcRenderer.invoke('sessions:list', agentId),
+  },
+  memory: {
+    listFiles: (agentId) => ipcRenderer.invoke('memory:listFiles', agentId),
+  },
 });

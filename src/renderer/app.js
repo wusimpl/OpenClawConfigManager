@@ -36,7 +36,7 @@ function esc(str) {
 }
 
 // ── Navigation ──
-const allPages = ['config', 'providers', 'workspace', 'gateway', 'logs', 'bindings', 'channels', 'agent-advanced', 'tools-config', 'skills'];
+const allPages = ['config', 'providers', 'workspace', 'gateway', 'logs', 'bindings', 'channels', 'agent-advanced', 'tools-config', 'skills', 'sessions', 'memory'];
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -56,6 +56,8 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (page === 'agent-advanced') renderAgentAdvanced();
     if (page === 'tools-config') renderToolsConfig();
     if (page === 'skills') renderSkills();
+    if (page === 'sessions') renderSessions();
+    if (page === 'memory') renderMemory();
   });
 });
 
@@ -111,6 +113,8 @@ function syncActivePageAfterConfigLoad() {
   if (activePage === 'agent-advanced') renderAgentAdvanced();
   if (activePage === 'tools-config') renderToolsConfig();
   if (activePage === 'skills') renderSkills();
+  if (activePage === 'sessions') renderSessions();
+  if (activePage === 'memory') renderMemory();
 }
 
 async function loadConfig(options = {}) {
@@ -3468,4 +3472,512 @@ async function disableSkillsWhitelist() {
       toast('保存失败: ' + res.error, 'error');
     }
   });
+}
+
+// ══════════════════════════════════════════════
+// ── 6. 会话管理 ──
+// ══════════════════════════════════════════════
+
+function renderSessions() {
+  if (!config) return;
+  const container = document.getElementById('sessions-editor');
+  const session = config.session || {};
+  const reset = session.reset || {};
+  const maintenance = session.maintenance || {};
+
+  let html = '';
+
+  // ── 配置编辑区 ──
+  html += `<div class="card" style="border-left:4px solid var(--primary)">
+    <h3>会话配置 (session)</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">DM 隔离策略 (dmScope)</label>
+        <select class="form-input" id="sess-dmScope" style="width:100%">
+          <option value="main"${session.dmScope === 'main' ? ' selected' : ''}>main</option>
+          <option value="per-peer"${session.dmScope === 'per-peer' ? ' selected' : ''}>per-peer</option>
+          <option value="per-channel-peer"${session.dmScope === 'per-channel-peer' ? ' selected' : ''}>per-channel-peer</option>
+          <option value="per-account-channel-peer"${session.dmScope === 'per-account-channel-peer' ? ' selected' : ''}>per-account-channel-peer</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">主会话键名 (mainKey)</label>
+        <input class="form-input" id="sess-mainKey" style="width:100%" value="${esc(session.mainKey || 'main')}" placeholder="main">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">重置模式 (reset.mode)</label>
+        <select class="form-input" id="sess-resetMode" style="width:100%">
+          <option value="daily"${reset.mode === 'daily' ? ' selected' : ''}>daily</option>
+          <option value="idle"${reset.mode === 'idle' ? ' selected' : ''}>idle</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">每日重置时间 (reset.atHour, 0-23)</label>
+        <input class="form-input" id="sess-atHour" type="number" min="0" max="23" style="width:100%" value="${reset.atHour ?? 0}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">空闲超时分钟 (reset.idleMinutes)</label>
+        <input class="form-input" id="sess-idleMinutes" type="number" min="1" style="width:100%" value="${reset.idleMinutes || ''}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">重置触发词 (逗号分隔)</label>
+        <input class="form-input" id="sess-resetTriggers" style="width:100%" value="${esc((session.resetTriggers || []).join(', '))}" placeholder="/reset, /clear">
+      </div>
+    </div>
+  </div>`;
+
+  // ── 维护策略配置 ──
+  html += `<div class="card" style="border-left:4px solid var(--success)">
+    <h3>维护策略 (session.maintenance)</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">维护模式 (mode)</label>
+        <select class="form-input" id="sess-maintMode" style="width:100%">
+          <option value="warn"${maintenance.mode === 'warn' ? ' selected' : ''}>warn</option>
+          <option value="enforce"${maintenance.mode === 'enforce' ? ' selected' : ''}>enforce</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">过期时间 (pruneAfter)</label>
+        <input class="form-input" id="sess-pruneAfter" style="width:100%" value="${esc(maintenance.pruneAfter || '30d')}" placeholder="30d">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">条目上限 (maxEntries)</label>
+        <input class="form-input" id="sess-maxEntries" type="number" min="1" style="width:100%" value="${maintenance.maxEntries || 500}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">轮转阈值 (rotateBytes)</label>
+        <input class="form-input" id="sess-rotateBytes" style="width:100%" value="${esc(maintenance.rotateBytes || '10mb')}" placeholder="10mb">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">磁盘预算 (maxDiskBytes, 可选)</label>
+        <input class="form-input" id="sess-maxDiskBytes" style="width:100%" value="${esc(maintenance.maxDiskBytes || '')}" placeholder="留空不限">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">清理目标 (highWaterBytes, 可选)</label>
+        <input class="form-input" id="sess-highWaterBytes" style="width:100%" value="${esc(maintenance.highWaterBytes || '')}" placeholder="留空不限">
+      </div>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button class="btn btn-primary" id="sess-save-config">保存会话配置</button>
+    </div>
+  </div>`;
+
+  // ── 状态查看区 ──
+  html += `<div class="card">
+    <h3>会话状态查看</h3>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <select class="form-input" id="sess-agent-select" style="min-width:200px">
+        <option value="">选择 Agent...</option>
+      </select>
+      <button class="btn btn-secondary" id="sess-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+    </div>
+    <div id="sess-status-list"><span style="color:var(--text-muted)">请先选择 Agent</span></div>
+  </div>`;
+
+  container.innerHTML = html;
+  lucide.createIcons();
+
+  document.getElementById('sess-save-config').addEventListener('click', saveSessionConfig);
+  loadSessionAgents();
+  document.getElementById('sess-agent-select').addEventListener('change', loadSessionsList);
+  document.getElementById('sess-refresh').addEventListener('click', loadSessionsList);
+}
+
+async function saveSessionConfig() {
+  if (!config.session) config.session = {};
+  const s = config.session;
+
+  s.dmScope = document.getElementById('sess-dmScope').value;
+  s.mainKey = document.getElementById('sess-mainKey').value.trim() || 'main';
+
+  if (!s.reset) s.reset = {};
+  s.reset.mode = document.getElementById('sess-resetMode').value;
+  const atHour = parseInt(document.getElementById('sess-atHour').value);
+  s.reset.atHour = Number.isFinite(atHour) ? Math.max(0, Math.min(23, atHour)) : 0;
+  const idleMin = parseInt(document.getElementById('sess-idleMinutes').value);
+  if (Number.isFinite(idleMin) && idleMin > 0) {
+    s.reset.idleMinutes = idleMin;
+  } else {
+    delete s.reset.idleMinutes;
+  }
+
+  const triggersRaw = document.getElementById('sess-resetTriggers').value;
+  const triggers = triggersRaw.split(',').map(t => t.trim()).filter(Boolean);
+  if (triggers.length > 0) s.resetTriggers = triggers;
+  else delete s.resetTriggers;
+
+  if (!s.maintenance) s.maintenance = {};
+  s.maintenance.mode = document.getElementById('sess-maintMode').value;
+  s.maintenance.pruneAfter = document.getElementById('sess-pruneAfter').value.trim() || '30d';
+  s.maintenance.maxEntries = parseInt(document.getElementById('sess-maxEntries').value) || 500;
+  s.maintenance.rotateBytes = document.getElementById('sess-rotateBytes').value.trim() || '10mb';
+
+  const maxDisk = document.getElementById('sess-maxDiskBytes').value.trim();
+  if (maxDisk) s.maintenance.maxDiskBytes = maxDisk;
+  else delete s.maintenance.maxDiskBytes;
+
+  const highWater = document.getElementById('sess-highWaterBytes').value.trim();
+  if (highWater) s.maintenance.highWaterBytes = highWater;
+  else delete s.maintenance.highWaterBytes;
+
+  const res = await window.api.config.write(config);
+  if (res.ok) toast('会话配置已保存，需重启网关生效');
+  else toast('保存失败: ' + res.error, 'error');
+}
+
+async function loadSessionAgents() {
+  const select = document.getElementById('sess-agent-select');
+  if (!select) return;
+  const res = await window.api.sessions.listAgents();
+  if (!res.ok) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">选择 Agent...</option>';
+  for (const agentId of res.agents) {
+    const opt = document.createElement('option');
+    opt.value = agentId;
+    opt.textContent = agentId;
+    select.appendChild(opt);
+  }
+  if (current && res.agents.includes(current)) select.value = current;
+}
+
+async function loadSessionsList() {
+  const agentId = document.getElementById('sess-agent-select')?.value;
+  const listEl = document.getElementById('sess-status-list');
+  if (!listEl) return;
+  if (!agentId) {
+    listEl.innerHTML = '<span style="color:var(--text-muted)">请先选择 Agent</span>';
+    return;
+  }
+
+  listEl.innerHTML = '<div style="text-align:center;padding:20px"><i data-lucide="loader" class="spin" style="width:24px;height:24px;color:var(--primary)"></i></div>';
+  lucide.createIcons();
+
+  const res = await window.api.sessions.list(agentId);
+  if (!res.ok) {
+    listEl.innerHTML = `<span style="color:var(--danger)">加载失败: ${esc(res.error)}</span>`;
+    return;
+  }
+
+  const sessions = res.data;
+  const keys = Object.keys(sessions);
+  if (keys.length === 0) {
+    listEl.innerHTML = '<span style="color:var(--text-muted)">该 Agent 暂无会话</span>';
+    return;
+  }
+
+  let html = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">会话键</th>
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">Session ID</th>
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">更新时间</th>
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">类型</th>
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">渠道</th>
+          <th style="text-align:right;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">压缩次数</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  for (const key of keys) {
+    const s = sessions[key];
+    const shortId = (s.sessionId || '').slice(0, 8) + '...';
+    const updatedAt = s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN') : '-';
+    const chatType = s.chatType || '-';
+    const channel = s.lastChannel || s.origin?.surface || '-';
+    const compaction = s.compactionCount ?? 0;
+
+    html += `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px;color:var(--text);font-family:monospace;font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(key)}">${esc(key)}</td>
+      <td style="padding:8px;font-family:monospace;font-size:12px;color:var(--text-muted)" title="${esc(s.sessionId || '')}">${esc(shortId)}</td>
+      <td style="padding:8px;color:var(--text-muted)">${esc(updatedAt)}</td>
+      <td style="padding:8px"><span class="badge badge-green" style="font-size:11px">${esc(chatType)}</span></td>
+      <td style="padding:8px;color:var(--text-muted)">${esc(channel)}</td>
+      <td style="padding:8px;text-align:right;color:var(--text-muted)">${compaction}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  listEl.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════
+// ── 7. 记忆管理 ──
+// ══════════════════════════════════════════════
+
+function renderMemory() {
+  if (!config) return;
+  const container = document.getElementById('memory-editor');
+  const defaults = config.agents?.defaults || {};
+  const ms = defaults.memorySearch || {};
+  const hybrid = ms.query?.hybrid || {};
+  const mmr = hybrid.mmr || {};
+  const decay = hybrid.temporalDecay || {};
+  const compaction = defaults.compaction || {};
+  const memFlush = compaction.memoryFlush || {};
+  const memory = defaults.memory || {};
+
+  let html = '';
+
+  // ── memorySearch 基础配置 ──
+  html += `<div class="card" style="border-left:4px solid var(--primary)">
+    <h3>记忆搜索配置 (memorySearch)</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">启用记忆搜索</label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="mem-ms-enabled" ${ms.enabled ? 'checked' : ''}> enabled
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">嵌入向量提供者 (provider)</label>
+        <select class="form-input" id="mem-ms-provider" style="width:100%">
+          ${['openai', 'gemini', 'voyage', 'mistral', 'local'].map(p =>
+            `<option value="${p}"${ms.provider === p ? ' selected' : ''}>${p}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">嵌入模型名 (model)</label>
+        <input class="form-input" id="mem-ms-model" style="width:100%" value="${esc(ms.model || '')}" placeholder="text-embedding-3-small">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">备用提供者 (fallback)</label>
+        <select class="form-input" id="mem-ms-fallback" style="width:100%">
+          <option value="">无</option>
+          ${['openai', 'gemini', 'voyage', 'mistral', 'local'].map(p =>
+            `<option value="${p}"${ms.fallback === p ? ' selected' : ''}>${p}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="form-group" style="grid-column:1/3">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">额外索引路径 (extraPaths, 每行一个)</label>
+        <textarea class="form-input" id="mem-ms-extraPaths" style="width:100%;height:60px;resize:vertical;font-family:monospace;font-size:13px">${esc((ms.extraPaths || []).join('\n'))}</textarea>
+      </div>
+    </div>
+  </div>`;
+
+  // ── 混合搜索配置 ──
+  html += `<div class="card" style="border-left:4px solid var(--warning)">
+    <h3>混合搜索配置 (memorySearch.query.hybrid)</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">启用混合搜索</label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="mem-hybrid-enabled" ${hybrid.enabled ? 'checked' : ''}> enabled
+        </label>
+      </div>
+      <div></div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">向量权重 (vectorWeight, 0-1)</label>
+        <input class="form-input" id="mem-hybrid-vectorWeight" type="number" min="0" max="1" step="0.1" style="width:100%" value="${hybrid.vectorWeight ?? 0.7}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">文本权重 (textWeight, 0-1)</label>
+        <input class="form-input" id="mem-hybrid-textWeight" type="number" min="0" max="1" step="0.1" style="width:100%" value="${hybrid.textWeight ?? 0.3}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">启用 MMR 去重</label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="mem-mmr-enabled" ${mmr.enabled ? 'checked' : ''}> mmr.enabled
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">MMR lambda (0-1)</label>
+        <input class="form-input" id="mem-mmr-lambda" type="number" min="0" max="1" step="0.1" style="width:100%" value="${mmr.lambda ?? 0.5}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">启用时间衰减</label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="mem-decay-enabled" ${decay.enabled ? 'checked' : ''}> temporalDecay.enabled
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">半衰期天数 (halfLifeDays)</label>
+        <input class="form-input" id="mem-decay-halfLifeDays" type="number" min="1" style="width:100%" value="${decay.halfLifeDays || ''}">
+      </div>
+    </div>
+  </div>`;
+
+  // ── memoryFlush + memory 后端 ──
+  html += `<div class="card" style="border-left:4px solid var(--success)">
+    <h3>预压缩记忆刷写 & 后端配置</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">启用记忆刷写 (memoryFlush)</label>
+        <label style="font-size:13px;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="mem-flush-enabled" ${memFlush.enabled ? 'checked' : ''}> enabled
+        </label>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">软阈值 Token 数 (softThresholdTokens)</label>
+        <input class="form-input" id="mem-flush-threshold" type="number" min="1" style="width:100%" value="${memFlush.softThresholdTokens || ''}">
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">记忆后端 (memory.backend)</label>
+        <select class="form-input" id="mem-backend" style="width:100%">
+          <option value="builtin"${memory.backend === 'builtin' ? ' selected' : ''}>builtin</option>
+          <option value="qmd"${memory.backend === 'qmd' ? ' selected' : ''}>qmd</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">引用模式 (memory.citations)</label>
+        <select class="form-input" id="mem-citations" style="width:100%">
+          <option value="auto"${(memory.citations || 'auto') === 'auto' ? ' selected' : ''}>auto</option>
+          <option value="on"${memory.citations === 'on' ? ' selected' : ''}>on</option>
+          <option value="off"${memory.citations === 'off' ? ' selected' : ''}>off</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button class="btn btn-primary" id="mem-save-config">保存记忆配置</button>
+    </div>
+  </div>`;
+
+  // ── 记忆文件查看区 ──
+  html += `<div class="card">
+    <h3>记忆文件查看</h3>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <select class="form-input" id="mem-agent-select" style="min-width:200px">
+        <option value="">选择 Agent...</option>
+      </select>
+      <button class="btn btn-secondary" id="mem-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+    </div>
+    <div id="mem-file-list"><span style="color:var(--text-muted)">请先选择 Agent</span></div>
+  </div>`;
+
+  container.innerHTML = html;
+  lucide.createIcons();
+
+  document.getElementById('mem-save-config').addEventListener('click', saveMemoryConfig);
+  loadMemoryAgents();
+  document.getElementById('mem-agent-select').addEventListener('change', loadMemoryFileList);
+  document.getElementById('mem-refresh').addEventListener('click', loadMemoryFileList);
+}
+
+async function saveMemoryConfig() {
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+  const d = config.agents.defaults;
+
+  // memorySearch
+  if (!d.memorySearch) d.memorySearch = {};
+  const ms = d.memorySearch;
+  ms.enabled = document.getElementById('mem-ms-enabled').checked;
+  ms.provider = document.getElementById('mem-ms-provider').value;
+  const model = document.getElementById('mem-ms-model').value.trim();
+  if (model) ms.model = model;
+  else delete ms.model;
+  const fallback = document.getElementById('mem-ms-fallback').value;
+  if (fallback) ms.fallback = fallback;
+  else delete ms.fallback;
+  const extraRaw = document.getElementById('mem-ms-extraPaths').value;
+  const extraPaths = extraRaw.split('\n').map(l => l.trim()).filter(Boolean);
+  if (extraPaths.length > 0) ms.extraPaths = extraPaths;
+  else delete ms.extraPaths;
+
+  // hybrid
+  if (!ms.query) ms.query = {};
+  if (!ms.query.hybrid) ms.query.hybrid = {};
+  const h = ms.query.hybrid;
+  h.enabled = document.getElementById('mem-hybrid-enabled').checked;
+  h.vectorWeight = parseFloat(document.getElementById('mem-hybrid-vectorWeight').value) || 0.7;
+  h.textWeight = parseFloat(document.getElementById('mem-hybrid-textWeight').value) || 0.3;
+  if (!h.mmr) h.mmr = {};
+  h.mmr.enabled = document.getElementById('mem-mmr-enabled').checked;
+  h.mmr.lambda = parseFloat(document.getElementById('mem-mmr-lambda').value) || 0.5;
+  if (!h.temporalDecay) h.temporalDecay = {};
+  h.temporalDecay.enabled = document.getElementById('mem-decay-enabled').checked;
+  const halfLife = parseInt(document.getElementById('mem-decay-halfLifeDays').value);
+  if (Number.isFinite(halfLife) && halfLife > 0) h.temporalDecay.halfLifeDays = halfLife;
+  else delete h.temporalDecay.halfLifeDays;
+
+  // memoryFlush
+  if (!d.compaction) d.compaction = {};
+  if (!d.compaction.memoryFlush) d.compaction.memoryFlush = {};
+  d.compaction.memoryFlush.enabled = document.getElementById('mem-flush-enabled').checked;
+  const threshold = parseInt(document.getElementById('mem-flush-threshold').value);
+  if (Number.isFinite(threshold) && threshold > 0) d.compaction.memoryFlush.softThresholdTokens = threshold;
+  else delete d.compaction.memoryFlush.softThresholdTokens;
+
+  // memory 后端
+  if (!d.memory) d.memory = {};
+  d.memory.backend = document.getElementById('mem-backend').value;
+  d.memory.citations = document.getElementById('mem-citations').value;
+
+  const res = await window.api.config.write(config);
+  if (res.ok) toast('记忆配置已保存，需重启网关生效');
+  else toast('保存失败: ' + res.error, 'error');
+}
+
+async function loadMemoryAgents() {
+  const select = document.getElementById('mem-agent-select');
+  if (!select) return;
+  const res = await window.api.sessions.listAgents();
+  if (!res.ok) return;
+  const current = select.value;
+  select.innerHTML = '<option value="">选择 Agent...</option>';
+  for (const agentId of res.agents) {
+    const opt = document.createElement('option');
+    opt.value = agentId;
+    opt.textContent = agentId;
+    select.appendChild(opt);
+  }
+  if (current && res.agents.includes(current)) select.value = current;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+async function loadMemoryFileList() {
+  const agentId = document.getElementById('mem-agent-select')?.value;
+  const listEl = document.getElementById('mem-file-list');
+  if (!listEl) return;
+  if (!agentId) {
+    listEl.innerHTML = '<span style="color:var(--text-muted)">请先选择 Agent</span>';
+    return;
+  }
+
+  listEl.innerHTML = '<div style="text-align:center;padding:20px"><i data-lucide="loader" class="spin" style="width:24px;height:24px;color:var(--primary)"></i></div>';
+  lucide.createIcons();
+
+  const res = await window.api.memory.listFiles(agentId);
+  if (!res.ok) {
+    listEl.innerHTML = `<span style="color:var(--danger)">加载失败: ${esc(res.error)}</span>`;
+    return;
+  }
+
+  const files = res.files;
+  if (files.length === 0) {
+    listEl.innerHTML = '<span style="color:var(--text-muted)">该 Agent 暂无记忆文件</span>';
+    return;
+  }
+
+  let html = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">文件名</th>
+          <th style="text-align:right;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">大小</th>
+          <th style="text-align:left;padding:8px;color:var(--text-muted);font-size:11px;text-transform:uppercase">修改时间</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  for (const f of files) {
+    const mtime = f.mtime ? new Date(f.mtime).toLocaleString('zh-CN') : '-';
+    html += `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px;color:var(--text);font-family:monospace;font-size:12px">${esc(f.name)}</td>
+      <td style="padding:8px;text-align:right;color:var(--text-muted)">${formatFileSize(f.size)}</td>
+      <td style="padding:8px;color:var(--text-muted)">${esc(mtime)}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  listEl.innerHTML = html;
 }

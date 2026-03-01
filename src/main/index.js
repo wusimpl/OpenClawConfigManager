@@ -13,6 +13,8 @@ require('./ipc/logs').register();
 require('./ipc/workspace').register();
 require('./ipc/models').register();
 require('./ipc/skills').register();
+require('./ipc/sessions').register();
+require('./ipc/memory').register();
 
 // ── 状态变量 ──
 
