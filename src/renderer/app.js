@@ -60,6 +60,24 @@ document.querySelectorAll('.nav-item').forEach(item => {
 });
 
 // ── Toast ──
+// 复制文本到剪贴板，复制成功后图标短暂变为勾号
+function copyToClipboard(text, btnEl) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (btnEl) {
+      const icon = btnEl.querySelector('[data-lucide]');
+      if (icon) {
+        icon.setAttribute('data-lucide', 'check');
+        lucide.createIcons();
+        setTimeout(() => {
+          icon.setAttribute('data-lucide', 'copy');
+          lucide.createIcons();
+        }, 1500);
+      }
+    }
+    toast('已复制到剪贴板');
+  }).catch(() => toast('复制失败', 'error'));
+}
+
 function toast(msg, type = 'success') {
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
@@ -422,10 +440,15 @@ function renderProviders() {
       <div style="display:flex; align-items:flex-start; justify-content:space-between">
         <div>
           <div style="font-weight:700; font-size:18px; color:var(--text)">${esc(key)}</div>
-          <div style="font-size:12px; color:var(--text-muted); margin-top:4px">${esc(p.baseUrl || '(无 URL)')}</div>
-          <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px; flex-wrap:wrap">
+          <div style="font-size:12px; color:var(--text-muted); margin-top:4px; display:flex; align-items:center; gap:4px">
+            ${esc(p.baseUrl || '(无 URL)')}
+            ${p.baseUrl ? `<button class="btn-copy" data-copy="${esc(p.baseUrl)}" title="复制 URL" style="background:none;border:none;padding:2px;cursor:pointer;color:var(--text-muted);display:inline-flex;align-items:center"><i data-lucide="copy" style="width:12px;height:12px"></i></button>` : ''}
+          </div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px; flex-wrap:wrap; align-items:center">
             <span><b>API:</b> ${esc(p.api || '(未设置)')}</span>
-            <span><b>Key:</b> ${esc(maskedKey)}</span>
+            <span style="display:inline-flex;align-items:center;gap:4px"><b>Key:</b> ${esc(maskedKey)}
+              ${p.apiKey ? `<button class="btn-copy" data-copy="${esc(p.apiKey)}" title="复制 Key" style="background:none;border:none;padding:2px;cursor:pointer;color:var(--text-muted);display:inline-flex;align-items:center"><i data-lucide="copy" style="width:12px;height:12px"></i></button>` : ''}
+            </span>
             ${headerStatusHtml}
           </div>
         </div>
@@ -439,7 +462,7 @@ function renderProviders() {
       html += '<span style="color:var(--text-muted);font-size:12px">无模型</span>';
     } else {
       for (const m of models) {
-        html += `<span class="provider-model-tag">${esc(m.name || m.id)}</span>`;
+        html += `<span class="provider-model-tag" style="display:inline-flex;align-items:center;gap:4px">${esc(m.name || m.id)}<button class="btn-copy" data-copy="${esc(m.id)}" title="复制 Model ID" style="background:none;border:none;padding:1px;cursor:pointer;color:var(--text-muted);display:inline-flex;align-items:center"><i data-lucide="copy" style="width:11px;height:11px"></i></button></span>`;
       }
     }
     html += '</div></div>';
@@ -452,6 +475,13 @@ function renderProviders() {
   });
   container.querySelectorAll('.btn-delete-provider').forEach(btn => {
     btn.addEventListener('click', () => deleteProvider(btn.dataset.key));
+  });
+  // 绑定复制按钮
+  container.querySelectorAll('.btn-copy').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyToClipboard(btn.dataset.copy, btn);
+    });
   });
   lucide.createIcons();
 }
@@ -1420,6 +1450,24 @@ function initWorkspacePage() {
         opt.value = agent.id;
         opt.textContent = agent.name || agent.id;
         select.appendChild(opt);
+      }
+
+      // 默认选择：优先保留已选，其次 main，再次第一个 agent
+      const hasCurrent = wsState.currentAgent && agents.some(a => a.id === wsState.currentAgent);
+      const mainAgent = agents.find(a => a.id === 'main');
+      const defaultAgentId = hasCurrent
+        ? wsState.currentAgent
+        : (mainAgent?.id || agents[0]?.id || null);
+
+      if (defaultAgentId) {
+        wsState.currentAgent = defaultAgentId;
+        select.value = defaultAgentId;
+        const wsPath = getAgentWorkspace(defaultAgentId);
+        if (wsPath) loadWorkspaceFiles(wsPath);
+        else clearEditor();
+      } else {
+        wsState.currentAgent = null;
+        clearEditor();
       }
     }
 
