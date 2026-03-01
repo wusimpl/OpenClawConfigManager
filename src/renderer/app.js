@@ -222,6 +222,27 @@ function getDefaultWorkspaceForAgent(agentId) {
   return id ? `~/.openclaw/workspace-${id}` : '~/.openclaw/workspace-';
 }
 
+function inferAgentIdFromWorkspacePath(workspacePath) {
+  const rawPath = String(workspacePath || '').trim().replace(/[\\/]+$/, '');
+  if (!rawPath) return '';
+  const segments = rawPath.split(/[\\/]/).filter(Boolean);
+  const base = segments.length ? segments[segments.length - 1] : '';
+  if (!base) return '';
+  const match = base.match(/^workspace-(.+)$/);
+  let candidate = (match?.[1] || base).toLowerCase();
+  candidate = candidate.replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^[-_]+|[-_]+$/g, '');
+  if (!candidate) return '';
+  return /^[0-9]/.test(candidate) ? `agent-${candidate}` : candidate;
+}
+
+function inferStateDirFromWorkspacePath(workspacePath) {
+  const rawPath = String(workspacePath || '').trim().replace(/[\\/]+$/, '');
+  if (!rawPath) return '';
+  const slashIdx = Math.max(rawPath.lastIndexOf('/'), rawPath.lastIndexOf('\\'));
+  if (slashIdx <= 0) return '';
+  return rawPath.slice(0, slashIdx);
+}
+
 async function updateAgentName(agentId, name) {
   const trimmedName = String(name || '').trim();
   if (!trimmedName) return { ok: true };
@@ -247,6 +268,299 @@ async function updateAgentName(agentId, name) {
   }
 
   return { ok: true };
+}
+
+function openImportAgentEditor() {
+  if (!config) {
+    toast('配置尚未加载完成', 'error');
+    return;
+  }
+
+  const html = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">导入 Agent</h3>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">源 Workspace 路径 <span style="color:var(--danger)">*</span></label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="form-input" id="bi-source-workspace" style="flex:1" placeholder="/Users/you/.openclawbak/workspace-crypto">
+        <button class="btn btn-secondary" id="bi-pick-source" style="padding:6px 12px;white-space:nowrap">浏览...</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:6px">将从该目录复制身份文件、脚本和 skills。</div>
+      <div id="bi-validate-hint" style="font-size:12px;margin-top:8px;color:var(--text-muted)">请选择或输入源 Workspace 路径</div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">目标 Agent ID <span style="color:var(--danger)">*</span></label>
+      <input class="form-input" id="bi-target-id" style="width:100%" placeholder="如: crypto">
+      <div id="bi-target-workspace-hint" style="font-size:12px;color:var(--text-muted);margin-top:6px">目标工作区：~/.openclaw/workspace-</div>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">显示名称（可选）</label>
+      <input class="form-input" id="bi-target-name" style="width:100%" placeholder="如: Crypto Agent">
+    </div>
+    <div class="card" style="margin:0 0 16px 0;padding:14px;border-left:3px solid var(--primary)">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">迁移选项</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
+        <input type="checkbox" id="bi-include-memory"> 迁移记忆（MEMORY.md + memory/）
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+        <input type="checkbox" id="bi-include-sessions"> 迁移会话历史（sessions）
+      </label>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:10px">
+        不勾选时会保留全新状态（仅导入身份文件、scripts、skills）。
+      </div>
+    </div>
+    <details style="margin-bottom:8px">
+      <summary style="cursor:pointer;font-size:13px;color:var(--text-muted)">高级：会话来源覆盖（可选）</summary>
+      <div style="margin-top:12px">
+        <div class="form-group" style="margin-bottom:12px">
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">源状态目录（默认：源 workspace 上级目录）</label>
+          <input class="form-input" id="bi-source-state-dir" style="width:100%" placeholder="/Users/you/.openclawbak">
+        </div>
+        <div class="form-group">
+          <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">源 Agent ID（默认：从 workspace-xxx 推断）</label>
+          <input class="form-input" id="bi-source-agent-id" style="width:100%" placeholder="如: crypto">
+        </div>
+      </div>
+    </details>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+      <button class="btn btn-secondary" id="bi-cancel">取消</button>
+      <button class="btn btn-primary" id="bi-save">导入</button>
+    </div>`;
+
+  const overlay = showModal(html);
+  const sourceWorkspaceInput = overlay.querySelector('#bi-source-workspace');
+  const pickSourceBtn = overlay.querySelector('#bi-pick-source');
+  const targetIdInput = overlay.querySelector('#bi-target-id');
+  const targetNameInput = overlay.querySelector('#bi-target-name');
+  const sourceStateDirInput = overlay.querySelector('#bi-source-state-dir');
+  const sourceAgentIdInput = overlay.querySelector('#bi-source-agent-id');
+  const includeMemoryInput = overlay.querySelector('#bi-include-memory');
+  const includeSessionsInput = overlay.querySelector('#bi-include-sessions');
+  const workspaceHint = overlay.querySelector('#bi-target-workspace-hint');
+  const validateHint = overlay.querySelector('#bi-validate-hint');
+  const cancelBtn = overlay.querySelector('#bi-cancel');
+  const saveBtn = overlay.querySelector('#bi-save');
+
+  let targetIdEdited = false;
+  let sourceStateEdited = false;
+  let sourceAgentEdited = false;
+  let sourceWorkspaceValid = false;
+  let validatingWorkspace = false;
+  let importing = false;
+  let sourceValidateTimer = null;
+
+  const renderValidateHint = (type, message) => {
+    const colorMap = {
+      neutral: 'var(--text-muted)',
+      loading: 'var(--text-muted)',
+      success: 'var(--success)',
+      error: 'var(--danger)',
+    };
+    validateHint.style.color = colorMap[type] || 'var(--text-muted)';
+    validateHint.textContent = message;
+  };
+
+  const updateSaveBtnState = () => {
+    if (importing) {
+      saveBtn.disabled = true;
+      return;
+    }
+    const targetAgentId = targetIdInput.value.trim();
+    const targetIdValid = AGENT_ID_PATTERN.test(targetAgentId);
+    const hasSourcePath = !!sourceWorkspaceInput.value.trim();
+    saveBtn.disabled = validatingWorkspace || !hasSourcePath || !targetIdValid || !sourceWorkspaceValid;
+  };
+
+  const renderTargetWorkspaceHint = () => {
+    const targetId = targetIdInput.value.trim();
+    workspaceHint.textContent = `目标工作区：${getDefaultWorkspaceForAgent(targetId)}`;
+    updateSaveBtnState();
+  };
+
+  const syncDerivedFields = () => {
+    const sourcePath = sourceWorkspaceInput.value.trim();
+    const inferredAgentId = inferAgentIdFromWorkspacePath(sourcePath);
+    const inferredStateDir = inferStateDirFromWorkspacePath(sourcePath);
+    if (!targetIdEdited && inferredAgentId) targetIdInput.value = inferredAgentId;
+    if (!sourceAgentEdited && inferredAgentId) sourceAgentIdInput.value = inferredAgentId;
+    if (!sourceStateEdited && inferredStateDir) sourceStateDirInput.value = inferredStateDir;
+    renderTargetWorkspaceHint();
+  };
+
+  const validateSourceWorkspace = async ({ showToastOnError = false } = {}) => {
+    const sourcePath = sourceWorkspaceInput.value.trim();
+    if (!sourcePath) {
+      sourceWorkspaceValid = false;
+      renderValidateHint('neutral', '请选择或输入源 Workspace 路径');
+      updateSaveBtnState();
+      return { ok: false, reason: 'empty' };
+    }
+
+    validatingWorkspace = true;
+    renderValidateHint('loading', '正在校验 Workspace...');
+    updateSaveBtnState();
+
+    const validationRes = await window.api.agents.validateWorkspace(sourcePath);
+    validatingWorkspace = false;
+
+    if (!validationRes.ok) {
+      sourceWorkspaceValid = false;
+      renderValidateHint('error', `校验失败：${validationRes.error || '未知错误'}`);
+      if (showToastOnError) toast(`校验失败: ${validationRes.error || '未知错误'}`, 'error');
+      updateSaveBtnState();
+      return { ok: false, reason: 'rpc' };
+    }
+
+    const data = validationRes.data || {};
+    if (!data.exists) {
+      sourceWorkspaceValid = false;
+      renderValidateHint('error', '源路径不存在');
+      updateSaveBtnState();
+      return { ok: false, reason: 'not-found', data };
+    }
+    if (!data.isDirectory) {
+      sourceWorkspaceValid = false;
+      renderValidateHint('error', '源路径不是目录');
+      updateSaveBtnState();
+      return { ok: false, reason: 'not-dir', data };
+    }
+    if (!data.isWorkspace) {
+      sourceWorkspaceValid = false;
+      const missing = (data.missingRequired || []).join(', ');
+      renderValidateHint('error', `缺少必需身份文件：${missing}`);
+      updateSaveBtnState();
+      return { ok: false, reason: 'missing-required', data };
+    }
+
+    sourceWorkspaceValid = true;
+    const missingOptional = data.missingOptional || [];
+    if (missingOptional.length > 0) {
+      renderValidateHint('success', `Workspace 校验通过（可选缺失：${missingOptional.join(', ')}）`);
+    } else {
+      renderValidateHint('success', 'Workspace 校验通过');
+    }
+    updateSaveBtnState();
+    return { ok: true, data };
+  };
+
+  const scheduleValidateSourceWorkspace = () => {
+    clearTimeout(sourceValidateTimer);
+    sourceValidateTimer = setTimeout(() => {
+      validateSourceWorkspace();
+    }, 220);
+  };
+
+  sourceWorkspaceInput.addEventListener('input', () => {
+    syncDerivedFields();
+    scheduleValidateSourceWorkspace();
+  });
+  sourceWorkspaceInput.addEventListener('blur', () => {
+    validateSourceWorkspace();
+  });
+  pickSourceBtn.addEventListener('click', async () => {
+    const pickRes = await window.api.agents.pickWorkspace();
+    if (!pickRes.ok) {
+      toast('打开文件夹选择器失败: ' + (pickRes.error || '未知错误'), 'error');
+      return;
+    }
+    if (pickRes.canceled || !pickRes.path) return;
+    sourceWorkspaceInput.value = pickRes.path;
+    syncDerivedFields();
+    await validateSourceWorkspace();
+  });
+  targetIdInput.addEventListener('input', () => {
+    targetIdEdited = true;
+    renderTargetWorkspaceHint();
+  });
+  sourceStateDirInput.addEventListener('input', () => { sourceStateEdited = true; });
+  sourceAgentIdInput.addEventListener('input', () => { sourceAgentEdited = true; });
+
+  cancelBtn.addEventListener('click', () => closeModal(overlay));
+  saveBtn.addEventListener('click', async () => {
+    const sourceWorkspace = sourceWorkspaceInput.value.trim();
+    const targetAgentId = targetIdInput.value.trim();
+    const targetName = targetNameInput.value.trim();
+    const sourceStateDir = sourceStateDirInput.value.trim();
+    const sourceAgentId = sourceAgentIdInput.value.trim();
+    const includeMemory = includeMemoryInput.checked;
+    const includeSessions = includeSessionsInput.checked;
+
+    if (!sourceWorkspace) {
+      toast('请输入源 Workspace 路径', 'error');
+      return;
+    }
+    if (!targetAgentId) {
+      toast('请输入目标 Agent ID', 'error');
+      return;
+    }
+    if (!AGENT_ID_PATTERN.test(targetAgentId)) {
+      toast('目标 Agent ID 格式不合法', 'error');
+      return;
+    }
+    const sourceValidation = await validateSourceWorkspace({ showToastOnError: true });
+    if (!sourceValidation.ok) {
+      toast('源 Workspace 不符合导入条件', 'error');
+      return;
+    }
+    const duplicate = (config.agents?.list || []).some(a => String(a.id || '').toLowerCase() === targetAgentId.toLowerCase());
+    if (duplicate) {
+      toast(`Agent "${targetAgentId}" 已存在`, 'error');
+      return;
+    }
+
+    importing = true;
+    updateSaveBtnState();
+    cancelBtn.disabled = true;
+    pickSourceBtn.disabled = true;
+    saveBtn.textContent = '导入中...';
+
+    const importPayload = {
+      sourceWorkspace,
+      targetAgentId,
+      includeMemory,
+      includeSessions,
+    };
+    if (sourceStateDir) importPayload.sourceStateDir = sourceStateDir;
+    if (sourceAgentId) importPayload.sourceAgentId = sourceAgentId;
+
+    const importRes = await window.api.agents.import(importPayload);
+    if (!importRes.ok) {
+      importing = false;
+      cancelBtn.disabled = false;
+      pickSourceBtn.disabled = false;
+      saveBtn.textContent = '导入';
+      updateSaveBtnState();
+      const partial = importRes.partial ? '（已部分执行）' : '';
+      toast(`导入失败${partial}: ${importRes.error || '未知错误'}`, 'error');
+      return;
+    }
+
+    let nameError = null;
+    if (targetName) {
+      const nameRes = await updateAgentName(targetAgentId, targetName);
+      if (!nameRes.ok) nameError = nameRes.error || '保存名称失败';
+    }
+
+    closeModal(overlay);
+    const reloadRes = await loadConfig({ showLoadingError: false, syncActivePage: true });
+    if (!reloadRes.ok) {
+      toast(`Agent "${targetAgentId}" 已导入，但刷新页面失败`, 'error');
+      return;
+    }
+
+    if (nameError) {
+      toast(`Agent "${targetAgentId}" 已导入，但名称保存失败: ${nameError}`, 'error');
+      return;
+    }
+
+    const copied = importRes.data?.copied || {};
+    const summary = [];
+    summary.push('基础文件已导入');
+    summary.push(copied.memory ? '记忆已迁移' : (includeMemory ? '未发现可迁移记忆' : '记忆未迁移'));
+    summary.push(copied.sessions ? '会话历史已迁移' : (includeSessions ? '未发现可迁移会话' : '会话历史未迁移'));
+    toast(`Agent "${targetAgentId}" 已导入：${summary.join('，')}`);
+  });
+
+  syncDerivedFields();
+  updateSaveBtnState();
 }
 
 function openAddAgentEditor() {
@@ -359,10 +673,15 @@ function renderAgents() {
   if (agents.length === 0) {
     container.innerHTML = `<div class="card">
       <p style="color:var(--text-muted);margin-bottom:14px">没有配置 agent</p>
-      <button class="btn btn-primary" id="btn-empty-add-agent"><i data-lucide="plus"></i> 立即创建 Agent</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="btn-empty-add-agent"><i data-lucide="plus"></i> 立即创建 Agent</button>
+        <button class="btn btn-secondary" id="btn-empty-import-agent"><i data-lucide="folder-input"></i> 导入 Agent</button>
+      </div>
     </div>`;
     const createBtn = container.querySelector('#btn-empty-add-agent');
+    const importBtn = container.querySelector('#btn-empty-import-agent');
     if (createBtn) createBtn.addEventListener('click', openAddAgentEditor);
+    if (importBtn) importBtn.addEventListener('click', openImportAgentEditor);
     lucide.createIcons();
     return;
   }
@@ -1547,6 +1866,7 @@ document.getElementById('btn-gw-stop').addEventListener('click', () => gatewayAc
 document.getElementById('btn-gw-restart').addEventListener('click', () => gatewayAction('restart', 'btn-gw-restart'));
 document.getElementById('btn-gw-refresh').addEventListener('click', refreshGatewayStatus);
 document.getElementById('btn-add-agent').addEventListener('click', openAddAgentEditor);
+document.getElementById('btn-import-agent').addEventListener('click', openImportAgentEditor);
 document.getElementById('btn-gw-log-clear').addEventListener('click', () => {
   clearGatewayLogs();
   toast('网关执行日志已清空');

@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   agents: {
     add: (payload) => ipcRenderer.invoke('agents:add', payload),
+    import: (payload) => ipcRenderer.invoke('agents:import', payload),
+    pickWorkspace: () => ipcRenderer.invoke('agents:pickWorkspace'),
+    validateWorkspace: (workspacePath) => ipcRenderer.invoke('agents:validateWorkspace', { workspacePath }),
   },
   models: {
     fetch: (opts) => ipcRenderer.invoke('models:fetch', opts),
