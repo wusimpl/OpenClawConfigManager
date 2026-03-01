@@ -380,6 +380,23 @@ function closeModal(overlay) {
   if (overlay) overlay.remove();
 }
 
+const DEFAULT_403_FIX_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+function normalizeProviderHeaders(provider) {
+  if (!provider || typeof provider !== 'object') return {};
+  const rawHeaders = provider.headers;
+  if (!rawHeaders || typeof rawHeaders !== 'object' || Array.isArray(rawHeaders)) return {};
+
+  const headers = {};
+  for (const [rawKey, rawValue] of Object.entries(rawHeaders)) {
+    const key = String(rawKey || '').trim();
+    if (!key) continue;
+    if (rawValue === undefined || rawValue === null) continue;
+    headers[key] = String(rawValue);
+  }
+  return headers;
+}
+
 function renderProviders() {
   const container = document.getElementById('providers-list');
   if (!config) { container.innerHTML = '<span class="loading">配置未加载</span>'; return; }
@@ -396,14 +413,20 @@ function renderProviders() {
     const p = providers[key];
     const models = p.models || [];
     const maskedKey = p.apiKey ? p.apiKey.slice(0, 6) + '...' + p.apiKey.slice(-4) : '(未设置)';
+    const providerHeaders = normalizeProviderHeaders(p);
+    const headerCount = Object.keys(providerHeaders).length;
+    const headerStatusHtml = headerCount > 0
+      ? `<span><b>Custom UI Header:</b> <span style="color:var(--success)">已启用 (${headerCount})</span> <i data-lucide="info" style="width:12px;height:12px;color:var(--text-muted);vertical-align:middle;cursor:help" title="当 Provider 遇到 403 Forbidden 时可启用，常用字段包括 User-Agent、Referer、Origin。"></i></span>`
+      : '<span><b>Custom UI Header:</b> <span style="color:var(--text-muted)">未启用</span></span>';
     html += `<div class="card" style="padding: 20px; border-left: 4px solid var(--primary)">
       <div style="display:flex; align-items:flex-start; justify-content:space-between">
         <div>
           <div style="font-weight:700; font-size:18px; color:var(--text)">${esc(key)}</div>
           <div style="font-size:12px; color:var(--text-muted); margin-top:4px">${esc(p.baseUrl || '(无 URL)')}</div>
-          <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px">
+          <div style="font-size:12px; color:var(--text-muted); margin-top:8px; display:flex; gap:16px; flex-wrap:wrap">
             <span><b>API:</b> ${esc(p.api || '(未设置)')}</span>
             <span><b>Key:</b> ${esc(maskedKey)}</span>
+            ${headerStatusHtml}
           </div>
         </div>
         <div style="display:flex; gap:8px">
@@ -430,11 +453,14 @@ function renderProviders() {
   container.querySelectorAll('.btn-delete-provider').forEach(btn => {
     btn.addEventListener('click', () => deleteProvider(btn.dataset.key));
   });
+  lucide.createIcons();
 }
 
 function buildProviderFormHtml(key, provider) {
   const isNew = !provider;
   const p = provider || { baseUrl: '', apiKey: '', api: 'anthropic-messages', models: [] };
+  const headers = normalizeProviderHeaders(p);
+  const hasHeaders = Object.keys(headers).length > 0;
   const title = isNew ? '添加 Provider' : `编辑 Provider: ${esc(key)}`;
   return `<h3 style="color:var(--text); text-transform:none; font-size:18px; margin-bottom:20px">${title}</h3>
     <div class="form-group" style="margin-bottom:16px">
@@ -455,6 +481,21 @@ function buildProviderFormHtml(key, provider) {
         <option value="anthropic-messages"${p.api === 'anthropic-messages' ? ' selected' : ''}>anthropic-messages</option>
         <option value="openai-completions"${p.api === 'openai-completions' ? ' selected' : ''}>openai-completions</option>
       </select>
+    </div>
+    <div class="form-group" style="margin-bottom:16px">
+      <label style="font-size:13px; display:flex; align-items:center; gap:8px">
+        <input type="checkbox" id="pf-headers-enabled" ${hasHeaders ? 'checked' : ''}> 启用 Custom UI Header（403 兼容）
+        <i data-lucide="info" style="width:14px;height:14px;color:var(--text-muted);cursor:help" title="遇到 Provider 返回 403 Forbidden 时可启用，常用字段包括 User-Agent、Referer、Origin。"></i>
+      </label>
+      <div id="pf-header-rows-wrap" style="margin-top:10px; ${hasHeaders ? '' : 'display:none'}">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <span style="font-size:12px; color:var(--text-muted)">Header 列表（Key / Value）</span>
+          <button class="btn btn-secondary btn-sm" id="pf-add-header" style="font-size:12px; padding:4px 10px">
+            <i data-lucide="plus" style="width:12px;height:12px"></i> 添加 Header
+          </button>
+        </div>
+        <div id="pf-header-rows" style="max-height:120px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px"></div>
+      </div>
     </div>
     <div class="form-group" style="margin-bottom:16px">
       <label style="display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px">模型列表</label>
@@ -483,6 +524,18 @@ function createModelRowEl(id, name) {
   return row;
 }
 
+function createHeaderRowEl(key, value) {
+  const row = document.createElement('div');
+  row.className = 'header-row';
+  row.style = 'display:flex; gap:8px; margin-bottom:6px; align-items:center';
+  row.innerHTML = `<input type="text" class="form-input hr-key" style="flex:1; padding:4px 8px; font-size:12px" value="${esc(key)}" placeholder="Header Key（如 User-Agent）">
+    <input type="text" class="form-input hr-value" style="flex:1; padding:4px 8px; font-size:12px" value="${esc(value)}" placeholder="Header Value">
+    <button class="btn btn-danger" style="padding:4px; line-height:1" title="删除"><i data-lucide="x" style="width:14px;height:14px"></i></button>`;
+  row.querySelector('.btn-danger').addEventListener('click', () => row.remove());
+  lucide.createIcons();
+  return row;
+}
+
 function collectModelsFromEditor(overlay) {
   const rows = overlay.querySelectorAll('#pf-model-rows .model-row');
   const models = [];
@@ -502,6 +555,18 @@ function collectModelsFromEditor(overlay) {
     }
   });
   return models;
+}
+
+function collectHeadersFromEditor(overlay) {
+  const rows = overlay.querySelectorAll('#pf-header-rows .header-row');
+  const headers = {};
+  rows.forEach(row => {
+    const key = row.querySelector('.hr-key').value.trim();
+    const value = row.querySelector('.hr-value').value.trim();
+    if (!key) return;
+    headers[key] = value;
+  });
+  return headers;
 }
 
 function showModelPicker(remoteModels, rowsContainer) {
@@ -557,6 +622,30 @@ function openProviderEditor(existingKey) {
   const provider = existingKey ? (config.models?.providers || {})[existingKey] : null;
   const overlay = showModal(buildProviderFormHtml(existingKey || '', provider));
 
+  const headerRowsContainer = overlay.querySelector('#pf-header-rows');
+  const headerRowsWrap = overlay.querySelector('#pf-header-rows-wrap');
+  const headersEnabledCheckbox = overlay.querySelector('#pf-headers-enabled');
+  const existingHeaders = normalizeProviderHeaders(provider);
+  for (const [headerKey, headerValue] of Object.entries(existingHeaders)) {
+    headerRowsContainer.appendChild(createHeaderRowEl(headerKey, headerValue));
+  }
+
+  if (headersEnabledCheckbox.checked && headerRowsContainer.children.length === 0) {
+    headerRowsContainer.appendChild(createHeaderRowEl('User-Agent', DEFAULT_403_FIX_USER_AGENT));
+  }
+
+  overlay.querySelector('#pf-add-header').addEventListener('click', () => {
+    headerRowsContainer.appendChild(createHeaderRowEl('', ''));
+  });
+
+  headersEnabledCheckbox.addEventListener('change', () => {
+    const enabled = headersEnabledCheckbox.checked;
+    headerRowsWrap.style.display = enabled ? '' : 'none';
+    if (enabled && headerRowsContainer.children.length === 0) {
+      headerRowsContainer.appendChild(createHeaderRowEl('User-Agent', DEFAULT_403_FIX_USER_AGENT));
+    }
+  });
+
   const rowsContainer = overlay.querySelector('#pf-model-rows');
   for (const m of (provider?.models || [])) {
     rowsContainer.appendChild(createModelRowEl(m.id, m.name || m.id));
@@ -593,10 +682,30 @@ function openProviderEditor(existingKey) {
     const apiKey = overlay.querySelector('#pf-apikey').value.trim();
     const api = overlay.querySelector('#pf-api').value;
     const models = collectModelsFromEditor(overlay);
+    const headersEnabled = overlay.querySelector('#pf-headers-enabled').checked;
+    const headers = headersEnabled ? collectHeadersFromEditor(overlay) : {};
     if (!key) { toast('Key 不能为空', 'error'); return; }
     if (!config.models) config.models = {};
     if (!config.models.providers) config.models.providers = {};
-    config.models.providers[key] = { baseUrl, apiKey, api, models };
+    if (headersEnabled && Object.keys(headers).length === 0) {
+      toast('已启用 Custom UI Header，请至少添加一条 Header', 'error');
+      return;
+    }
+
+    const currentProvider = config.models.providers[key] || {};
+    const nextProvider = {
+      ...currentProvider,
+      baseUrl,
+      apiKey,
+      api,
+      models,
+    };
+    if (headersEnabled) {
+      nextProvider.headers = headers;
+    } else {
+      delete nextProvider.headers;
+    }
+    config.models.providers[key] = nextProvider;
     const res = await window.api.config.write(config);
     closeModal(overlay);
     if (res.ok) {
@@ -1992,27 +2101,76 @@ function renderToolsConfig() {
 // ── 5. Skills 管理 ──
 // ══════════════════════════════════════════════
 
-function renderSkills() {
+let skillsCache = null;  // { groups: { bundled, managed, workspace, personal } }
+let currentSkillTab = 'bundled';
+
+// Tab 切换事件绑定
+document.querySelectorAll('.sk-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.sk-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentSkillTab = tab.dataset.skTab;
+    renderSkillTabContent();
+  });
+});
+
+// 顶层入口：加载数据并渲染
+async function renderSkills() {
+  if (!config) return;
+  const container = document.getElementById('skills-editor');
+  container.innerHTML = '<div style="text-align:center;padding:40px"><i data-lucide="loader" class="spin" style="width:32px;height:32px;color:var(--primary)"></i><p style="margin-top:16px;color:var(--text-muted)">正在加载 Skills 列表...</p></div>';
+  lucide.createIcons();
+
+  try {
+    const result = await window.api.skills.listAll();
+    if (!result.ok) {
+      container.innerHTML = `<div class="card"><p style="color:var(--danger)">加载失败：${esc(result.error || '未知错误')}</p></div>`;
+      return;
+    }
+    skillsCache = result.groups;
+  } catch (e) {
+    container.innerHTML = `<div class="card"><p style="color:var(--danger)">加载异常：${esc(e.message)}</p></div>`;
+    return;
+  }
+
+  // 更新 Tab 计数
+  document.querySelectorAll('.sk-tab').forEach(tab => {
+    const key = tab.dataset.skTab;
+    const count = (skillsCache[key] || []).length;
+    const labels = { bundled: 'Bundled', managed: '全局 Skills', workspace: '工作区 Skills', personal: '个人 Skills' };
+    tab.textContent = `${labels[key]}（${count}）`;
+  });
+
+  renderSkillTabContent();
+}
+
+// 按当前 Tab 渲染内容
+function renderSkillTabContent() {
+  if (!skillsCache) return;
+  if (currentSkillTab === 'bundled') {
+    renderBundledTab();
+  } else {
+    renderGenericSkillTab(currentSkillTab);
+  }
+}
+
+// ── Bundled Tab（保留原有 allowBundled 白名单逻辑）──
+
+function renderBundledTab() {
   if (!config) return;
   const container = document.getElementById('skills-editor');
 
-  // 获取当前的allowBundled配置
   const skills = config.skills || {};
   let allowBundled = skills.allowBundled;
-
-  // 处理边界情况
   let skillsList = [];
   let isWhitelistMode = false;
 
   if (allowBundled === undefined || allowBundled === null) {
-    // 未设置，默认所有bundled skills可用
     isWhitelistMode = false;
   } else if (Array.isArray(allowBundled)) {
     isWhitelistMode = true;
-    // 过滤掉无效值（空字符串、null、undefined）并去重
     skillsList = [...new Set(allowBundled.filter(s => s && typeof s === 'string' && s.trim()))];
   } else {
-    // 非法值，视为未设置
     isWhitelistMode = false;
   }
 
@@ -2079,34 +2237,306 @@ function renderSkills() {
 
   html += `</div>`;
 
+  // Bundled skills 完整列表（只读展示，带 entries 配置入口）
+  const bundledSkills = skillsCache?.bundled || [];
+  if (bundledSkills.length > 0) {
+    html += `<div class="card" style="margin-top:20px">
+      <h3>所有 Bundled Skills（${bundledSkills.length}）</h3>
+      <div style="display:grid;gap:8px">`;
+    for (const skill of bundledSkills) {
+      html += buildSkillCardHtml(skill);
+    }
+    html += `</div></div>`;
+  }
+
   container.innerHTML = html;
   lucide.createIcons();
 
-  // 绑定事件
+  // 事件绑定
   if (isWhitelistMode) {
     const addBtn = document.getElementById('sk-add-skill');
-    if (addBtn) {
-      addBtn.addEventListener('click', openAddSkillDialog);
-    }
-
+    if (addBtn) addBtn.addEventListener('click', openAddSkillDialog);
     container.querySelectorAll('.sk-remove').forEach(btn => {
       btn.addEventListener('click', () => removeSkillFromWhitelist(btn.dataset.skill));
     });
-
     const disableBtn = document.getElementById('sk-disable-whitelist');
-    if (disableBtn) {
-      disableBtn.addEventListener('click', disableSkillsWhitelist);
-    }
+    if (disableBtn) disableBtn.addEventListener('click', disableSkillsWhitelist);
   } else {
     const enableBtn = document.getElementById('sk-enable-whitelist');
-    if (enableBtn) {
-      enableBtn.addEventListener('click', enableSkillsWhitelist);
+    if (enableBtn) enableBtn.addEventListener('click', enableSkillsWhitelist);
+  }
+
+  bindSkillCardEvents(container);
+}
+
+// ── 通用 Tab 渲染（managed / workspace / personal）──
+
+function renderGenericSkillTab(tabKey) {
+  if (!config) return;
+  const container = document.getElementById('skills-editor');
+  const skills = skillsCache?.[tabKey] || [];
+  const labels = { managed: '全局', workspace: '工作区', personal: '个人' };
+  const label = labels[tabKey] || tabKey;
+
+  if (skills.length === 0) {
+    container.innerHTML = `<div class="card">
+      <p style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px">
+        暂无${label} Skills
+      </p>
+    </div>`;
+    return;
+  }
+
+  let html = `<div class="card">
+    <h3>${label} Skills（${skills.length}）</h3>
+    <div style="display:grid;gap:8px">`;
+  for (const skill of skills) {
+    html += buildSkillCardHtml(skill);
+  }
+  html += `</div></div>`;
+
+  container.innerHTML = html;
+  lucide.createIcons();
+  bindSkillCardEvents(container);
+}
+
+// ── Skill 卡片 HTML ──
+
+function buildSkillCardHtml(skill) {
+  const entryConfig = config.skills?.entries?.[skill.name] || {};
+  const isDisabled = entryConfig.enabled === false;
+  const hasConfig = Object.keys(entryConfig).length > 0;
+
+  // 状态 badge
+  let statusHtml = '';
+  if (isDisabled) {
+    statusHtml = '<span class="badge badge-red" style="font-size:11px">已禁用</span>';
+  } else if (skill.eligible) {
+    statusHtml = '<span class="badge badge-green" style="font-size:11px">已生效</span>';
+  } else if (skill.blockedByAllowlist) {
+    statusHtml = '<span style="font-size:11px;color:var(--warning);background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:12px">白名单阻止</span>';
+  } else {
+    statusHtml = '<span style="font-size:11px;color:var(--text-muted);background:#27272a;padding:2px 8px;border-radius:12px">缺少依赖</span>';
+  }
+
+  // 缺失依赖
+  let missingHtml = '';
+  const missing = skill.missing || {};
+  const missingBins = (missing.bins || []).concat(missing.anyBins || []);
+  const missingEnv = missing.env || [];
+  if (missingBins.length > 0 || missingEnv.length > 0) {
+    const parts = [];
+    if (missingBins.length > 0) parts.push(`缺少命令: ${missingBins.join(', ')}`);
+    if (missingEnv.length > 0) parts.push(`缺少环境变量: ${missingEnv.join(', ')}`);
+    missingHtml = `<div style="font-size:11px;color:var(--warning);margin-top:4px">${esc(parts.join('；'))}</div>`;
+  }
+
+  // 来源标签
+  const sourceLabels = {
+    'openclaw-bundled': 'Bundled',
+    'openclaw-managed': '全局',
+    'openclaw-workspace': '工作区',
+    'agents-skills-personal': '个人',
+  };
+  const sourceLabel = sourceLabels[skill.source] || skill.source || '';
+
+  return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:#18181b;border:1px solid var(--border);border-radius:8px">
+    <span style="font-size:20px;flex-shrink:0;width:28px;text-align:center">${skill.emoji || '📦'}</span>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-family:monospace;font-size:13px;font-weight:600;color:var(--text)">${esc(skill.name)}</span>
+        <span style="font-size:10px;color:var(--text-muted);background:#27272a;padding:1px 6px;border-radius:4px">${esc(sourceLabel)}</span>
+        ${statusHtml}
+        ${hasConfig ? '<span style="font-size:10px;color:var(--primary);background:rgba(59,130,246,0.1);padding:1px 6px;border-radius:4px">已配置</span>' : ''}
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(skill.description || '')}</div>
+      ${missingHtml}
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      ${isDisabled
+        ? `<button class="btn btn-primary sk-toggle-btn" data-skill="${esc(skill.name)}" data-action="enable" style="padding:4px 10px;font-size:11px">启用</button>`
+        : `<button class="btn btn-danger sk-toggle-btn" data-skill="${esc(skill.name)}" data-action="disable" style="padding:4px 10px;font-size:11px">禁用</button>`}
+      <button class="btn btn-secondary sk-config-btn" data-skill="${esc(skill.name)}" style="padding:4px 10px;font-size:11px">配置</button>
+    </div>
+  </div>`;
+}
+
+// ── 绑定卡片事件 ──
+
+function bindSkillCardEvents(container) {
+  container.querySelectorAll('.sk-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleSkillEnabled(btn.dataset.skill, btn.dataset.action));
+  });
+  container.querySelectorAll('.sk-config-btn').forEach(btn => {
+    btn.addEventListener('click', () => openSkillConfigDialog(btn.dataset.skill));
+  });
+}
+
+// ── 启用/禁用 skill ──
+
+async function toggleSkillEnabled(skillName, action) {
+  if (!config.skills) config.skills = {};
+  if (!config.skills.entries) config.skills.entries = {};
+
+  if (action === 'disable') {
+    if (!config.skills.entries[skillName]) config.skills.entries[skillName] = {};
+    config.skills.entries[skillName].enabled = false;
+  } else {
+    // 启用：如果 entry 只有 enabled: false，直接删除整个 entry
+    if (config.skills.entries[skillName]) {
+      delete config.skills.entries[skillName].enabled;
+      if (Object.keys(config.skills.entries[skillName]).length === 0) {
+        delete config.skills.entries[skillName];
+      }
     }
+    // 清理空的 entries
+    if (Object.keys(config.skills.entries).length === 0) {
+      delete config.skills.entries;
+    }
+  }
+
+  const res = await window.api.config.write(config);
+  if (res.ok) {
+    toast(`已${action === 'disable' ? '禁用' : '启用'} "${skillName}"，重启网关生效`);
+    renderSkillTabContent();
+  } else {
+    toast('保存失败: ' + res.error, 'error');
   }
 }
 
+// ── Skill 配置编辑对话框 ──
+
+function openSkillConfigDialog(skillName) {
+  const entries = config.skills?.entries || {};
+  const entry = entries[skillName] || {};
+  const currentEnabled = entry.enabled !== false;
+  const currentApiKey = entry.apiKey || '';
+  const currentEnv = entry.env || {};
+  const envKeys = Object.keys(currentEnv);
+
+  let envRowsHtml = '';
+  if (envKeys.length > 0) {
+    for (const key of envKeys) {
+      envRowsHtml += buildEnvRowHtml(key, currentEnv[key]);
+    }
+  }
+
+  const overlay = showModal(`
+    <h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">
+      配置 Skill: ${esc(skillName)}
+    </h3>
+
+    <div style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <label style="font-size:13px;font-weight:600;color:var(--text)">启用状态</label>
+        <select id="sk-cfg-enabled" style="min-width:120px">
+          <option value="true" ${currentEnabled ? 'selected' : ''}>启用</option>
+          <option value="false" ${!currentEnabled ? 'selected' : ''}>禁用</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px">API Key</label>
+        <input class="form-input" id="sk-cfg-apikey" style="width:100%;font-family:monospace" placeholder="留空表示不设置" value="${esc(currentApiKey)}">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">对应 skill 的 primaryEnv 环境变量</div>
+      </div>
+
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <label style="font-size:13px;font-weight:600;color:var(--text)">环境变量</label>
+          <button class="btn btn-secondary" id="sk-cfg-add-env" style="padding:2px 10px;font-size:11px">
+            <i data-lucide="plus" style="width:12px;height:12px"></i> 添加
+          </button>
+        </div>
+        <div id="sk-cfg-env-list" style="display:grid;gap:6px">
+          ${envRowsHtml || '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:8px" id="sk-cfg-env-empty">暂无环境变量</div>'}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="sk-cfg-cancel">取消</button>
+      <button class="btn btn-primary" id="sk-cfg-save">保存</button>
+    </div>
+  `);
+
+  overlay.querySelector('.modal').style.maxWidth = '560px';
+
+  // 添加环境变量行
+  overlay.querySelector('#sk-cfg-add-env').addEventListener('click', () => {
+    const emptyHint = overlay.querySelector('#sk-cfg-env-empty');
+    if (emptyHint) emptyHint.remove();
+    const list = overlay.querySelector('#sk-cfg-env-list');
+    const row = document.createElement('div');
+    row.innerHTML = buildEnvRowHtml('', '');
+    list.appendChild(row.firstElementChild);
+  });
+
+  // 删除环境变量行代理
+  overlay.querySelector('#sk-cfg-env-list').addEventListener('click', (e) => {
+    if (e.target.classList.contains('sk-env-remove') || e.target.closest('.sk-env-remove')) {
+      e.target.closest('.sk-env-row').remove();
+    }
+  });
+
+  // 取消
+  overlay.querySelector('#sk-cfg-cancel').addEventListener('click', () => closeModal(overlay));
+
+  // 保存
+  overlay.querySelector('#sk-cfg-save').addEventListener('click', async () => {
+    const enabledVal = overlay.querySelector('#sk-cfg-enabled').value === 'true';
+    const apiKeyVal = overlay.querySelector('#sk-cfg-apikey').value.trim();
+
+    // 收集环境变量
+    const envObj = {};
+    overlay.querySelectorAll('.sk-env-row').forEach(row => {
+      const key = row.querySelector('.sk-env-key').value.trim();
+      const val = row.querySelector('.sk-env-val').value.trim();
+      if (key) envObj[key] = val;
+    });
+
+    // 构建 entry 对象
+    if (!config.skills) config.skills = {};
+    if (!config.skills.entries) config.skills.entries = {};
+
+    const newEntry = {};
+    if (!enabledVal) newEntry.enabled = false;
+    if (apiKeyVal) newEntry.apiKey = apiKeyVal;
+    if (Object.keys(envObj).length > 0) newEntry.env = envObj;
+
+    if (Object.keys(newEntry).length > 0) {
+      config.skills.entries[skillName] = newEntry;
+    } else {
+      // 空配置，删除 entry
+      delete config.skills.entries[skillName];
+      if (Object.keys(config.skills.entries).length === 0) {
+        delete config.skills.entries;
+      }
+    }
+
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+
+    if (res.ok) {
+      toast(`已保存 "${skillName}" 的配置`);
+      renderSkillTabContent();
+    } else {
+      toast('保存失败: ' + res.error, 'error');
+    }
+  });
+}
+
+function buildEnvRowHtml(key, value) {
+  return `<div class="sk-env-row" style="display:flex;gap:6px;align-items:center">
+    <input class="form-input sk-env-key" style="flex:1;font-family:monospace;font-size:12px;padding:6px 8px" placeholder="KEY" value="${esc(key)}">
+    <input class="form-input sk-env-val" style="flex:2;font-family:monospace;font-size:12px;padding:6px 8px" placeholder="VALUE" value="${esc(value)}">
+    <button class="btn btn-danger sk-env-remove" style="padding:4px 8px;font-size:11px;flex-shrink:0">删除</button>
+  </div>`;
+}
+
+// ── Bundled Tab 原有子功能 ──
+
 async function openAddSkillDialog() {
-  // 显示加载中的对话框
   const loadingHtml = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">添加 Bundled Skill</h3>
     <div style="text-align:center;padding:40px">
       <i data-lucide="loader" class="spin" style="width:32px;height:32px;color:var(--primary)"></i>
@@ -2116,11 +2546,9 @@ async function openAddSkillDialog() {
   const overlay = showModal(loadingHtml);
   overlay.querySelector('.modal').style.maxWidth = '620px';
 
-  // 通过 openclaw skills list --json 获取真实列表
   const result = await window.api.skills.listBundled();
 
   if (!result.ok) {
-    // 加载失败，降级为手动输入
     overlay.querySelector('.modal').innerHTML = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">添加 Bundled Skill</h3>
       <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:12px;margin-bottom:20px;font-size:12px;color:var(--danger)">
         <b>无法加载列表：</b>${esc(result.error || '未知错误')}
@@ -2148,7 +2576,6 @@ async function openAddSkillDialog() {
     return;
   }
 
-  // 成功获取列表
   const bundledSkills = result.skills || [];
   const currentWhitelist = config.skills?.allowBundled || [];
 
@@ -2187,7 +2614,6 @@ async function openAddSkillDialog() {
 
   overlay.querySelector('#sk-add-cancel').addEventListener('click', () => closeModal(overlay));
 
-  // 快速添加按钮
   overlay.querySelectorAll('.sk-quick-add').forEach(btn => {
     btn.addEventListener('click', async () => {
       const skillName = btn.dataset.skill;
@@ -2198,20 +2624,17 @@ async function openAddSkillDialog() {
 }
 
 async function addSkillToWhitelist(skillName) {
-  // 获取当前白名单
   if (!config.skills) config.skills = {};
   let allowBundled = config.skills.allowBundled;
   if (!Array.isArray(allowBundled)) {
     allowBundled = [];
   }
 
-  // 检查是否已存在
   if (allowBundled.includes(skillName)) {
     toast('该 Skill 已在白名单中', 'error');
     return;
   }
 
-  // 添加到白名单
   allowBundled.push(skillName);
   config.skills.allowBundled = allowBundled;
 
@@ -2219,7 +2642,7 @@ async function addSkillToWhitelist(skillName) {
 
   if (res.ok) {
     toast(`已添加 "${skillName}" 到白名单`);
-    renderSkills();
+    renderBundledTab();
   } else {
     toast('保存失败: ' + res.error, 'error');
   }
@@ -2242,7 +2665,6 @@ async function removeSkillFromWhitelist(skillName) {
 
   overlay.querySelector('#sk-rm-cancel').addEventListener('click', () => closeModal(overlay));
   overlay.querySelector('#sk-rm-confirm').addEventListener('click', async () => {
-    // 从数组中移除
     config.skills.allowBundled = config.skills.allowBundled.filter(s => s !== skillName);
 
     const res = await window.api.config.write(config);
@@ -2250,7 +2672,7 @@ async function removeSkillFromWhitelist(skillName) {
 
     if (res.ok) {
       toast(`已从白名单移除 "${skillName}"`);
-      renderSkills();
+      renderBundledTab();
     } else {
       toast('保存失败: ' + res.error, 'error');
     }
@@ -2281,7 +2703,7 @@ async function enableSkillsWhitelist() {
 
     if (res.ok) {
       toast('已启用白名单模式，需重启网关生效');
-      renderSkills();
+      renderBundledTab();
     } else {
       toast('保存失败: ' + res.error, 'error');
     }
@@ -2305,7 +2727,6 @@ async function disableSkillsWhitelist() {
   overlay.querySelector('#sk-dis-confirm').addEventListener('click', async () => {
     if (config.skills) {
       delete config.skills.allowBundled;
-      // 如果skills对象为空，也删除它
       if (Object.keys(config.skills).length === 0) {
         delete config.skills;
       }
@@ -2316,7 +2737,7 @@ async function disableSkillsWhitelist() {
 
     if (res.ok) {
       toast('已禁用白名单模式，需重启网关生效');
-      renderSkills();
+      renderBundledTab();
     } else {
       toast('保存失败: ' + res.error, 'error');
     }

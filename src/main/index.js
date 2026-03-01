@@ -826,29 +826,63 @@ ipcMain.handle('models:fetch', async (_ev, { baseUrl, apiKey, api }) => {
   return { ok: false, error: '无法从远程获取模型列表，请检查 URL 和 API Key' };
 });
 
-// ── List bundled skills ──
+// ── List skills ──
+
+// 获取所有 skills 并按来源分组
+async function fetchAllSkills() {
+  const result = await runOpenclaw(['skills', 'list', '--json']);
+
+  if (!result.ok) {
+    return { ok: false, error: result.stderr || '执行 openclaw skills list 失败' };
+  }
+
+  const stdout = result.stdout || '';
+  if (!stdout.trim()) {
+    return { ok: false, error: 'openclaw skills list 返回为空' };
+  }
+
+  const data = JSON.parse(stdout);
+  return { ok: true, skills: data.skills || [] };
+}
 
 ipcMain.handle('skills:listBundled', async () => {
   try {
-    // 通过官方命令 openclaw skills list --json 获取所有 skills
-    const result = await runOpenclaw(['skills', 'list', '--json']);
-
-    if (!result.ok) {
-      return { ok: false, error: result.error || '执行 openclaw skills list 失败' };
-    }
-
-    const stdout = result.stdout || '';
-    if (!stdout.trim()) {
-      return { ok: false, error: 'openclaw skills list 返回为空' };
-    }
-
-    const data = JSON.parse(stdout);
-    const allSkills = data.skills || [];
-
-    // 只返回 bundled skills
-    const bundledSkills = allSkills.filter(s => s.bundled === true);
-
+    const result = await fetchAllSkills();
+    if (!result.ok) return result;
+    const bundledSkills = result.skills.filter(s => s.bundled === true);
     return { ok: true, skills: bundledSkills };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('skills:listAll', async () => {
+  try {
+    const result = await fetchAllSkills();
+    if (!result.ok) return result;
+
+    const allSkills = result.skills;
+    const groups = {
+      bundled: [],
+      managed: [],
+      workspace: [],
+      personal: [],
+    };
+
+    for (const skill of allSkills) {
+      if (skill.source === 'openclaw-bundled') {
+        groups.bundled.push(skill);
+      } else if (skill.source === 'openclaw-managed') {
+        groups.managed.push(skill);
+      } else if (skill.source === 'openclaw-workspace') {
+        groups.workspace.push(skill);
+      } else {
+        // agents-skills-personal 和其他未知来源归入 personal
+        groups.personal.push(skill);
+      }
+    }
+
+    return { ok: true, skills: allSkills, groups };
   } catch (e) {
     return { ok: false, error: e.message };
   }

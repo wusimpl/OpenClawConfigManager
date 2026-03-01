@@ -26,5 +26,6 @@ contextBridge.exposeInMainWorld('api', {
   },
   skills: {
     listBundled: () => ipcRenderer.invoke('skills:listBundled'),
+    listAll: () => ipcRenderer.invoke('skills:listAll'),
   },
 });

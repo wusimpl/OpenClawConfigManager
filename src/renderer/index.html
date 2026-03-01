@@ -385,6 +385,15 @@
     .hidden { display: none !important; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* Skills Tab */
+    .sk-tab {
+      padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
+      cursor: pointer; background: #18181b; color: var(--text-muted);
+      border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .sk-tab:hover { border-color: var(--border-hover); color: var(--text); }
+    .sk-tab.active { background: #27272a; color: var(--primary); border-color: var(--primary); }
   </style>
 </head>
 <body>
@@ -554,6 +563,12 @@
       <h1>Skills 管理</h1>
       <div class="restart-notice">
         <span>修改 Skills 配置后需要重启网关才能生效</span>
+      </div>
+      <div class="sk-tabs" style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+        <div class="sk-tab active" data-sk-tab="bundled">Bundled</div>
+        <div class="sk-tab" data-sk-tab="managed">全局 Skills</div>
+        <div class="sk-tab" data-sk-tab="workspace">工作区 Skills</div>
+        <div class="sk-tab" data-sk-tab="personal">个人 Skills</div>
       </div>
       <div id="skills-editor"></div>
     </div>
