@@ -394,6 +394,63 @@
     }
     .sk-tab:hover { border-color: var(--border-hover); color: var(--text); }
     .sk-tab.active { background: #27272a; color: var(--primary); border-color: var(--primary); }
+
+    /* Fallback 模型列表 */
+    .fb-list { margin-top: 12px; }
+    .fb-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #09090b;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      transition: border-color 0.2s;
+    }
+    .fb-item:hover { border-color: var(--border-hover); }
+    .fb-item-index {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      min-width: 20px;
+      text-align: center;
+    }
+    .fb-item-label {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fb-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .fb-btn:hover { border-color: var(--border-hover); color: var(--text); }
+    .fb-btn-danger:hover { border-color: rgba(239,68,68,0.4); color: var(--danger); }
+    .fb-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .fb-add-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .fb-add-row select { flex: 1; min-width: 0; }
+    .fb-empty {
+      font-size: 13px;
+      color: var(--text-muted);
+      padding: 12px 0;
+    }
   </style>
 </head>
 <body>

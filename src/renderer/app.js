@@ -215,6 +215,12 @@ function getDefaultModel() {
   return d.primary || null;
 }
 
+function getDefaultFallbacks() {
+  const d = config.agents?.defaults?.model;
+  if (!d || typeof d === 'string') return [];
+  return Array.isArray(d.fallbacks) ? [...d.fallbacks] : [];
+}
+
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 function getDefaultWorkspaceForAgent(agentId) {
@@ -731,9 +737,12 @@ function renderDefaultModel() {
   const container = document.getElementById('default-model-card');
   const allModels = getAllModels();
   const defaultModel = getDefaultModel();
+  const fallbacks = getDefaultFallbacks();
 
-  let html = '<div class="card"><h3>全局默认模型 (agents.defaults.model.primary)</h3>';
-  html += '<div style="display:flex;align-items:center;gap:12px;margin-top:8px;">';
+  // --- Primary 模型选择 ---
+  let html = '<div class="card"><h3>全局默认模型 (agents.defaults.model)</h3>';
+  html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">主模型 (primary)</div>';
+  html += '<div style="display:flex;align-items:center;gap:12px;">';
   html += `<select id="default-model-select" data-orig="${esc(defaultModel || '')}">`;
   html += `<option value="">不设置</option>`;
   for (const m of allModels) {
@@ -742,9 +751,52 @@ function renderDefaultModel() {
   }
   html += '</select>';
   html += '<button class="btn btn-secondary" id="btn-save-default" disabled>保存</button>';
-  html += '</div></div>';
-  container.innerHTML = html;
+  html += '</div>';
 
+  // --- Fallback 模型列表 ---
+  html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+  html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">备用模型 (fallbacks)</div>';
+  html += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">当主模型遇到频率限制、超时或认证失败时，系统按顺序切换到备用模型</div>';
+  html += '<div class="fb-list" id="fb-list">';
+
+  if (fallbacks.length === 0) {
+    html += '<div class="fb-empty">未设置备用模型</div>';
+  } else {
+    for (let i = 0; i < fallbacks.length; i++) {
+      const fb = fallbacks[i];
+      const modelInfo = allModels.find(m => m.value === fb);
+      const label = modelInfo ? modelInfo.label : fb;
+      html += `<div class="fb-item" data-fb-index="${i}">`;
+      html += `<span class="fb-item-index">${i + 1}</span>`;
+      html += `<span class="fb-item-label" title="${esc(fb)}">${esc(label)}</span>`;
+      html += `<button class="fb-btn" data-fb-action="up" data-fb-index="${i}"${i === 0 ? ' disabled' : ''} title="上移"><i data-lucide="chevron-up" style="width:14px;height:14px"></i></button>`;
+      html += `<button class="fb-btn" data-fb-action="down" data-fb-index="${i}"${i === fallbacks.length - 1 ? ' disabled' : ''} title="下移"><i data-lucide="chevron-down" style="width:14px;height:14px"></i></button>`;
+      html += `<button class="fb-btn fb-btn-danger" data-fb-action="remove" data-fb-index="${i}" title="删除"><i data-lucide="x" style="width:14px;height:14px"></i></button>`;
+      html += '</div>';
+    }
+  }
+
+  html += '</div>'; // fb-list
+
+  // 添加新 fallback
+  html += '<div class="fb-add-row">';
+  html += '<select id="fb-add-select">';
+  html += '<option value="">选择备用模型...</option>';
+  for (const m of allModels) {
+    // 排除已在 fallbacks 中的和当前 primary
+    if (fallbacks.includes(m.value) || m.value === defaultModel) continue;
+    html += `<option value="${esc(m.value)}">${esc(m.label)}</option>`;
+  }
+  html += '</select>';
+  html += '<button class="btn btn-secondary" id="btn-fb-add" disabled><i data-lucide="plus" style="width:14px;height:14px"></i> 添加</button>';
+  html += '</div>';
+
+  html += '</div>'; // fallback 区域
+  html += '</div>'; // card
+  container.innerHTML = html;
+  lucide.createIcons();
+
+  // --- Primary 变更检测 ---
   document.getElementById('default-model-select').addEventListener('change', () => {
     const sel = document.getElementById('default-model-select');
     const btn = document.getElementById('btn-save-default');
@@ -753,6 +805,45 @@ function renderDefaultModel() {
     btn.className = dirty ? 'btn btn-dirty' : 'btn btn-secondary';
   });
   document.getElementById('btn-save-default').addEventListener('click', saveDefaultModel);
+
+  // --- Fallback 添加按钮 ---
+  const fbAddSelect = document.getElementById('fb-add-select');
+  const fbAddBtn = document.getElementById('btn-fb-add');
+  fbAddSelect.addEventListener('change', () => {
+    fbAddBtn.disabled = !fbAddSelect.value;
+  });
+  fbAddBtn.addEventListener('click', async () => {
+    const value = fbAddSelect.value;
+    if (!value) return;
+    const currentFallbacks = getDefaultFallbacks();
+    if (currentFallbacks.includes(value)) {
+      toast('该模型已在备用列表中', 'error');
+      return;
+    }
+    currentFallbacks.push(value);
+    await saveDefaultFallbacks(currentFallbacks);
+  });
+
+  // --- Fallback 列表操作（上移/下移/删除） ---
+  container.querySelectorAll('.fb-btn[data-fb-action]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.fbAction;
+      const index = parseInt(btn.dataset.fbIndex, 10);
+      const currentFallbacks = getDefaultFallbacks();
+      if (index < 0 || index >= currentFallbacks.length) return;
+
+      if (action === 'up' && index > 0) {
+        [currentFallbacks[index - 1], currentFallbacks[index]] = [currentFallbacks[index], currentFallbacks[index - 1]];
+        await saveDefaultFallbacks(currentFallbacks);
+      } else if (action === 'down' && index < currentFallbacks.length - 1) {
+        [currentFallbacks[index], currentFallbacks[index + 1]] = [currentFallbacks[index + 1], currentFallbacks[index]];
+        await saveDefaultFallbacks(currentFallbacks);
+      } else if (action === 'remove') {
+        currentFallbacks.splice(index, 1);
+        await saveDefaultFallbacks(currentFallbacks);
+      }
+    });
+  });
 }
 
 async function saveAgentModel(agentId) {
@@ -787,7 +878,13 @@ async function saveDefaultModel() {
   if (!config.agents.defaults) config.agents.defaults = {};
 
   if (value === '') {
-    delete config.agents.defaults.model;
+    // 清除 primary，但保留 fallbacks（如果存在）
+    const existingModel = config.agents.defaults.model;
+    if (existingModel && typeof existingModel === 'object' && Array.isArray(existingModel.fallbacks) && existingModel.fallbacks.length > 0) {
+      delete existingModel.primary;
+    } else {
+      delete config.agents.defaults.model;
+    }
   } else {
     if (!config.agents.defaults.model) config.agents.defaults.model = {};
     if (typeof config.agents.defaults.model === 'string') {
@@ -812,6 +909,41 @@ async function saveDefaultModel() {
   }
 }
 
+async function saveDefaultFallbacks(fallbacksArray) {
+  if (!config.agents) config.agents = {};
+  if (!config.agents.defaults) config.agents.defaults = {};
+
+  if (fallbacksArray.length === 0) {
+    // 删除 fallbacks 字段
+    if (config.agents.defaults.model && typeof config.agents.defaults.model === 'object') {
+      delete config.agents.defaults.model.fallbacks;
+      // 如果 model 对象只剩空壳，简化结构
+      const keys = Object.keys(config.agents.defaults.model);
+      if (keys.length === 0) {
+        delete config.agents.defaults.model;
+      } else if (keys.length === 1 && keys[0] === 'primary') {
+        // 只剩 primary，保持对象格式（OpenClaw 标准格式）
+      }
+    }
+  } else {
+    if (!config.agents.defaults.model) config.agents.defaults.model = {};
+    if (typeof config.agents.defaults.model === 'string') {
+      config.agents.defaults.model = { primary: config.agents.defaults.model, fallbacks: fallbacksArray };
+    } else {
+      config.agents.defaults.model.fallbacks = fallbacksArray;
+    }
+  }
+
+  const res = await window.api.config.write(config);
+  if (res.ok) {
+    toast('备用模型已更新');
+    renderDefaultModel();
+    renderAgents();
+  } else {
+    toast('保存失败: ' + res.error, 'error');
+  }
+}
+
 // ── Provider Management ──
 
 function findAffectedByProvider(providerKey) {
@@ -822,6 +954,14 @@ function findAffectedByProvider(providerKey) {
   // check default model
   if (defaultModel && defaultModel.startsWith(providerKey + '/')) {
     affected.push({ type: 'default', label: '全局默认模型', model: defaultModel });
+  }
+
+  // check fallbacks
+  const fallbacks = getDefaultFallbacks();
+  for (const fb of fallbacks) {
+    if (fb.startsWith(providerKey + '/')) {
+      affected.push({ type: 'fallback', label: `备用模型: ${fb}`, model: fb });
+    }
   }
 
   // check each agent
@@ -1197,11 +1337,13 @@ function openProviderEditor(existingKey) {
     }
     config.models.providers[key] = nextProvider;
     const res = await window.api.config.write(config);
-    closeModal(overlay);
     if (res.ok) {
+      closeModal(overlay);
       toast('保存成功');
       renderProviders();
       renderAgents();
+    } else {
+      toast('保存失败: ' + (res.error || '未知错误'), 'error');
     }
   });
 }
@@ -1243,6 +1385,18 @@ async function executeDeleteProvider(providerKey, affected) {
           if (Object.keys(config.agents.defaults.model).length === 0) {
             delete config.agents.defaults.model;
           }
+        }
+      }
+    } else if (a.type === 'fallback') {
+      // 从 fallbacks 数组中移除该模型
+      if (config.agents?.defaults?.model && typeof config.agents.defaults.model === 'object' && Array.isArray(config.agents.defaults.model.fallbacks)) {
+        config.agents.defaults.model.fallbacks = config.agents.defaults.model.fallbacks.filter(fb => fb !== a.model);
+        if (config.agents.defaults.model.fallbacks.length === 0) {
+          delete config.agents.defaults.model.fallbacks;
+        }
+        // 清理空 model 对象
+        if (Object.keys(config.agents.defaults.model).length === 0) {
+          delete config.agents.defaults.model;
         }
       }
     } else if (a.type === 'agent') {
@@ -2335,22 +2489,30 @@ function openChannelEditor(key) {
 
   overlay.querySelector('#cf-cancel').addEventListener('click', () => closeModal(overlay));
   overlay.querySelector('#cf-save').addEventListener('click', async () => {
-    const updated = {
-      appId: overlay.querySelector('#cf-appid').value.trim(),
-      appSecret: overlay.querySelector('#cf-secret').value.trim(),
-      enabled: overlay.querySelector('#cf-enabled').checked,
-      requireMention: overlay.querySelector('#cf-mention').checked,
-    };
+    const original = config.channels[key] || {};
+    const updated = JSON.parse(JSON.stringify(original));
+    const appId = overlay.querySelector('#cf-appid').value.trim();
+    const appSecret = overlay.querySelector('#cf-secret').value.trim();
+
+    if (appId || Object.prototype.hasOwnProperty.call(original, 'appId')) updated.appId = appId;
+    else delete updated.appId;
+    if (appSecret || Object.prototype.hasOwnProperty.call(original, 'appSecret')) updated.appSecret = appSecret;
+    else delete updated.appSecret;
+
+    updated.enabled = overlay.querySelector('#cf-enabled').checked;
+    updated.requireMention = overlay.querySelector('#cf-mention').checked;
+
     const groupRows = overlay.querySelectorAll('.cf-group-row');
-    if (groupRows.length > 0) {
-      updated.groups = {};
-      groupRows.forEach(row => {
-        const gid = row.querySelector('.cf-gid').value.trim();
-        if (gid) {
-          updated.groups[gid] = { requireMention: row.querySelector('.cf-grm').checked };
-        }
-      });
-    }
+    const nextGroups = {};
+    groupRows.forEach(row => {
+      const gid = row.querySelector('.cf-gid').value.trim();
+      if (gid) {
+        nextGroups[gid] = { requireMention: row.querySelector('.cf-grm').checked };
+      }
+    });
+    if (Object.keys(nextGroups).length > 0) updated.groups = nextGroups;
+    else delete updated.groups;
+
     config.channels[key] = updated;
     const res = await window.api.config.write(config);
     closeModal(overlay);
