@@ -36,7 +36,7 @@ function esc(str) {
 }
 
 // ── Navigation ──
-const allPages = ['config', 'providers', 'workspace', 'gateway', 'logs', 'bindings', 'channels', 'agent-advanced', 'tools-config'];
+const allPages = ['config', 'providers', 'workspace', 'gateway', 'logs', 'bindings', 'channels', 'agent-advanced', 'tools-config', 'skills'];
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -55,6 +55,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (page === 'channels') renderChannels();
     if (page === 'agent-advanced') renderAgentAdvanced();
     if (page === 'tools-config') renderToolsConfig();
+    if (page === 'skills') renderSkills();
   });
 });
 
@@ -91,6 +92,7 @@ function syncActivePageAfterConfigLoad() {
   if (activePage === 'channels') renderChannels();
   if (activePage === 'agent-advanced') renderAgentAdvanced();
   if (activePage === 'tools-config') renderToolsConfig();
+  if (activePage === 'skills') renderSkills();
 }
 
 async function loadConfig(options = {}) {
@@ -1983,5 +1985,340 @@ function renderToolsConfig() {
     const res = await window.api.config.write(config);
     if (res.ok) toast('Tools 配置已保存，需重启网关生效');
     else toast('保存失败: ' + res.error, 'error');
+  });
+}
+
+// ══════════════════════════════════════════════
+// ── 5. Skills 管理 ──
+// ══════════════════════════════════════════════
+
+function renderSkills() {
+  if (!config) return;
+  const container = document.getElementById('skills-editor');
+
+  // 获取当前的allowBundled配置
+  const skills = config.skills || {};
+  let allowBundled = skills.allowBundled;
+
+  // 处理边界情况
+  let skillsList = [];
+  let isWhitelistMode = false;
+
+  if (allowBundled === undefined || allowBundled === null) {
+    // 未设置，默认所有bundled skills可用
+    isWhitelistMode = false;
+  } else if (Array.isArray(allowBundled)) {
+    isWhitelistMode = true;
+    // 过滤掉无效值（空字符串、null、undefined）并去重
+    skillsList = [...new Set(allowBundled.filter(s => s && typeof s === 'string' && s.trim()))];
+  } else {
+    // 非法值，视为未设置
+    isWhitelistMode = false;
+  }
+
+  let html = `<div class="card" style="border-left:4px solid var(--primary)">
+    <h3>Bundled Skills 白名单</h3>
+    <div style="margin-bottom:20px">
+      <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:12px">
+        allowBundled 字段用于控制哪些内置技能（bundled skills）可以被加载。
+      </p>
+      <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:12px;font-size:12px;color:var(--text-muted)">
+        <div style="margin-bottom:8px"><b style="color:var(--primary)">工作模式：</b></div>
+        <div style="margin-left:12px;line-height:1.6">
+          • <b>未设置白名单</b>：所有 bundled skills 默认可用<br>
+          • <b>已设置白名单</b>：仅列表中的 bundled skills 可用<br>
+          • <b>空白名单</b>：禁用所有 bundled skills
+        </div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(59,130,246,0.15)">
+          <b>注意：</b>此配置仅影响 bundled skills，不影响 workspace 和 managed skills
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:14px;font-weight:600;color:var(--text)">当前模式：</span>
+        <span class="badge ${isWhitelistMode ? 'badge-green' : 'badge-red'}" style="font-size:13px">
+          ${isWhitelistMode ? '白名单模式（已启用）' : '默认模式（未启用白名单）'}
+        </span>
+      </div>
+      <div style="display:flex;gap:8px">
+        ${isWhitelistMode
+          ? '<button class="btn btn-danger" id="sk-disable-whitelist" style="padding:6px 14px;font-size:13px">禁用白名单</button>'
+          : '<button class="btn btn-primary" id="sk-enable-whitelist" style="padding:6px 14px;font-size:13px">启用白名单</button>'}
+      </div>
+    </div>`;
+
+  if (isWhitelistMode) {
+    html += `<div style="margin-top:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <span style="font-size:13px;font-weight:600;color:var(--text-muted)">允许的 Bundled Skills（${skillsList.length}）</span>
+        <button class="btn btn-secondary" id="sk-add-skill" style="padding:4px 12px;font-size:12px">
+          <i data-lucide="plus" style="width:14px;height:14px"></i> 添加 Skill
+        </button>
+      </div>`;
+
+    if (skillsList.length === 0) {
+      html += `<div style="background:#18181b;border:1px solid var(--border);border-radius:8px;padding:20px;text-align:center">
+        <p style="color:var(--text-muted);font-size:13px">白名单为空，所有 bundled skills 将被禁用</p>
+        <p style="color:var(--warning);font-size:12px;margin-top:8px">点击上方"添加 Skill"按钮添加允许的技能</p>
+      </div>`;
+    } else {
+      html += `<div id="sk-list" style="display:grid;gap:8px">`;
+      for (let i = 0; i < skillsList.length; i++) {
+        const skill = skillsList[i];
+        html += `<div class="sk-item" style="display:flex;align-items:center;justify-content:space-between;background:#18181b;border:1px solid var(--border);border-radius:8px;padding:12px 16px">
+          <span style="font-family:monospace;font-size:13px;color:var(--text)">${esc(skill)}</span>
+          <button class="btn btn-danger sk-remove" data-skill="${esc(skill)}" style="padding:4px 10px;font-size:11px">删除</button>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+
+  container.innerHTML = html;
+  lucide.createIcons();
+
+  // 绑定事件
+  if (isWhitelistMode) {
+    const addBtn = document.getElementById('sk-add-skill');
+    if (addBtn) {
+      addBtn.addEventListener('click', openAddSkillDialog);
+    }
+
+    container.querySelectorAll('.sk-remove').forEach(btn => {
+      btn.addEventListener('click', () => removeSkillFromWhitelist(btn.dataset.skill));
+    });
+
+    const disableBtn = document.getElementById('sk-disable-whitelist');
+    if (disableBtn) {
+      disableBtn.addEventListener('click', disableSkillsWhitelist);
+    }
+  } else {
+    const enableBtn = document.getElementById('sk-enable-whitelist');
+    if (enableBtn) {
+      enableBtn.addEventListener('click', enableSkillsWhitelist);
+    }
+  }
+}
+
+async function openAddSkillDialog() {
+  // 显示加载中的对话框
+  const loadingHtml = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">添加 Bundled Skill</h3>
+    <div style="text-align:center;padding:40px">
+      <i data-lucide="loader" class="spin" style="width:32px;height:32px;color:var(--primary)"></i>
+      <p style="margin-top:16px;color:var(--text-muted)">正在加载 bundled skills 列表...</p>
+    </div>`;
+
+  const overlay = showModal(loadingHtml);
+  overlay.querySelector('.modal').style.maxWidth = '620px';
+
+  // 通过 openclaw skills list --json 获取真实列表
+  const result = await window.api.skills.listBundled();
+
+  if (!result.ok) {
+    // 加载失败，降级为手动输入
+    overlay.querySelector('.modal').innerHTML = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:20px">添加 Bundled Skill</h3>
+      <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:12px;margin-bottom:20px;font-size:12px;color:var(--danger)">
+        <b>无法加载列表：</b>${esc(result.error || '未知错误')}
+      </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px">手动输入 Skill 名称</label>
+        <input class="form-input" id="sk-name-input" style="width:100%;font-family:monospace" placeholder="输入 skill 名称">
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:24px">
+        <button class="btn btn-secondary" id="sk-add-cancel">取消</button>
+        <button class="btn btn-primary" id="sk-add-confirm">添加</button>
+      </div>`;
+    lucide.createIcons();
+
+    const input = overlay.querySelector('#sk-name-input');
+    overlay.querySelector('#sk-add-cancel').addEventListener('click', () => closeModal(overlay));
+    overlay.querySelector('#sk-add-confirm').addEventListener('click', async () => {
+      const v = input.value.trim();
+      if (!v) { toast('名称不能为空', 'error'); return; }
+      await addSkillToWhitelist(v);
+      closeModal(overlay);
+    });
+    input.addEventListener('keypress', (e) => { if (e.key === 'Enter') overlay.querySelector('#sk-add-confirm').click(); });
+    setTimeout(() => input.focus(), 100);
+    return;
+  }
+
+  // 成功获取列表
+  const bundledSkills = result.skills || [];
+  const currentWhitelist = config.skills?.allowBundled || [];
+
+  let skillListHtml = '';
+  if (bundledSkills.length === 0) {
+    skillListHtml = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">未找到 bundled skills</div>';
+  } else {
+    for (const skill of bundledSkills) {
+      const inList = currentWhitelist.includes(skill.name);
+      const actionHtml = inList
+        ? '<span style="color:var(--success);font-size:12px;white-space:nowrap">已添加</span>'
+        : `<button class="btn btn-primary sk-quick-add" data-skill="${esc(skill.name)}" style="padding:2px 10px;font-size:11px">添加</button>`;
+
+      skillListHtml += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+        <span style="font-size:18px;flex-shrink:0;width:24px;text-align:center">${skill.emoji || ''}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:monospace;font-size:13px;color:var(--text);font-weight:600">${esc(skill.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(skill.description || '')}</div>
+        </div>
+        <div style="flex-shrink:0">${actionHtml}</div>
+      </div>`;
+    }
+  }
+
+  overlay.querySelector('.modal').innerHTML = `<h3 style="color:var(--text);text-transform:none;font-size:18px;margin-bottom:16px">添加 Bundled Skill</h3>
+    <div style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px">可用的 Bundled Skills（${bundledSkills.length}）</div>
+      <div style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:#09090b">
+        ${skillListHtml}
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end">
+      <button class="btn btn-secondary" id="sk-add-cancel">关闭</button>
+    </div>`;
+  lucide.createIcons();
+
+  overlay.querySelector('#sk-add-cancel').addEventListener('click', () => closeModal(overlay));
+
+  // 快速添加按钮
+  overlay.querySelectorAll('.sk-quick-add').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const skillName = btn.dataset.skill;
+      await addSkillToWhitelist(skillName);
+      closeModal(overlay);
+    });
+  });
+}
+
+async function addSkillToWhitelist(skillName) {
+  // 获取当前白名单
+  if (!config.skills) config.skills = {};
+  let allowBundled = config.skills.allowBundled;
+  if (!Array.isArray(allowBundled)) {
+    allowBundled = [];
+  }
+
+  // 检查是否已存在
+  if (allowBundled.includes(skillName)) {
+    toast('该 Skill 已在白名单中', 'error');
+    return;
+  }
+
+  // 添加到白名单
+  allowBundled.push(skillName);
+  config.skills.allowBundled = allowBundled;
+
+  const res = await window.api.config.write(config);
+
+  if (res.ok) {
+    toast(`已添加 "${skillName}" 到白名单`);
+    renderSkills();
+  } else {
+    toast('保存失败: ' + res.error, 'error');
+  }
+}
+
+async function removeSkillFromWhitelist(skillName) {
+  if (!config.skills || !Array.isArray(config.skills.allowBundled)) return;
+
+  const overlay = showModal(`<h3 style="color:var(--text);text-transform:none">从白名单移除 Skill？</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin:12px 0">
+      确定要从白名单中移除 <b style="color:var(--text);font-family:monospace">${esc(skillName)}</b> 吗？
+    </p>
+    <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:10px;margin:12px 0;font-size:12px;color:var(--danger)">
+      移除后该 bundled skill 将无法被加载
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="sk-rm-cancel">取消</button>
+      <button class="btn btn-danger" id="sk-rm-confirm">确认移除</button>
+    </div>`);
+
+  overlay.querySelector('#sk-rm-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#sk-rm-confirm').addEventListener('click', async () => {
+    // 从数组中移除
+    config.skills.allowBundled = config.skills.allowBundled.filter(s => s !== skillName);
+
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+
+    if (res.ok) {
+      toast(`已从白名单移除 "${skillName}"`);
+      renderSkills();
+    } else {
+      toast('保存失败: ' + res.error, 'error');
+    }
+  });
+}
+
+async function enableSkillsWhitelist() {
+  const overlay = showModal(`<h3 style="color:var(--text);text-transform:none">启用 Bundled Skills 白名单？</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin:12px 0;line-height:1.6">
+      启用白名单后，将创建一个空的 allowBundled 数组。此时<b style="color:var(--warning)">所有 bundled skills 将被禁用</b>，
+      你需要手动添加允许的 skills。
+    </p>
+    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:10px;margin:12px 0;font-size:12px;color:var(--warning)">
+      <b>注意：</b>启用后需要重启网关才能生效
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="sk-en-cancel">取消</button>
+      <button class="btn btn-primary" id="sk-en-confirm">确认启用</button>
+    </div>`);
+
+  overlay.querySelector('#sk-en-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#sk-en-confirm').addEventListener('click', async () => {
+    if (!config.skills) config.skills = {};
+    config.skills.allowBundled = [];
+
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+
+    if (res.ok) {
+      toast('已启用白名单模式，需重启网关生效');
+      renderSkills();
+    } else {
+      toast('保存失败: ' + res.error, 'error');
+    }
+  });
+}
+
+async function disableSkillsWhitelist() {
+  const overlay = showModal(`<h3 style="color:var(--text);text-transform:none">禁用 Bundled Skills 白名单？</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin:12px 0;line-height:1.6">
+      禁用白名单后，将删除 allowBundled 配置，<b style="color:var(--success)">所有 bundled skills 将恢复默认可用状态</b>。
+    </p>
+    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:10px;margin:12px 0;font-size:12px;color:var(--warning)">
+      <b>注意：</b>禁用后需要重启网关才能生效
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-secondary" id="sk-dis-cancel">取消</button>
+      <button class="btn btn-primary" id="sk-dis-confirm">确认禁用</button>
+    </div>`);
+
+  overlay.querySelector('#sk-dis-cancel').addEventListener('click', () => closeModal(overlay));
+  overlay.querySelector('#sk-dis-confirm').addEventListener('click', async () => {
+    if (config.skills) {
+      delete config.skills.allowBundled;
+      // 如果skills对象为空，也删除它
+      if (Object.keys(config.skills).length === 0) {
+        delete config.skills;
+      }
+    }
+
+    const res = await window.api.config.write(config);
+    closeModal(overlay);
+
+    if (res.ok) {
+      toast('已禁用白名单模式，需重启网关生效');
+      renderSkills();
+    } else {
+      toast('保存失败: ' + res.error, 'error');
+    }
   });
 }

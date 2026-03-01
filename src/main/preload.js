@@ -24,4 +24,7 @@ contextBridge.exposeInMainWorld('api', {
   logs: {
     read: (opts) => ipcRenderer.invoke('logs:read', opts),
   },
+  skills: {
+    listBundled: () => ipcRenderer.invoke('skills:listBundled'),
+  },
 });

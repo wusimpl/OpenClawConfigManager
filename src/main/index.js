@@ -505,10 +505,8 @@ function runOpenclaw(args) {
     const command = toCommandString(executable, args);
     const startedAt = Date.now();
 
-    execFile(executable, args, {
+    execFile('bash', ['-c', `unset npm_config_prefix; export PATH="$HOME/.nvm/versions/node/v22.21.1/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"; ${command}`], {
       timeout: 30000,
-      env: { ...process.env, PATH: userPath },
-      windowsHide: true,
     }, (err, stdout, stderr) => {
       const durationMs = Date.now() - startedAt;
       const stdoutText = stdout?.trim();
@@ -554,9 +552,7 @@ function runOpenclawDetached(args) {
     };
 
     try {
-      const child = spawn(executable, args, {
-        env: { ...process.env, PATH: userPath },
-        windowsHide: true,
+      const child = spawn('bash', ['-c', `unset npm_config_prefix; export PATH="$HOME/.nvm/versions/node/v22.21.1/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"; ${command}`], {
         stdio: 'ignore',
       });
 
@@ -828,4 +824,32 @@ ipcMain.handle('models:fetch', async (_ev, { baseUrl, apiKey, api }) => {
     }
   }
   return { ok: false, error: '无法从远程获取模型列表，请检查 URL 和 API Key' };
+});
+
+// ── List bundled skills ──
+
+ipcMain.handle('skills:listBundled', async () => {
+  try {
+    // 通过官方命令 openclaw skills list --json 获取所有 skills
+    const result = await runOpenclaw(['skills', 'list', '--json']);
+
+    if (!result.ok) {
+      return { ok: false, error: result.error || '执行 openclaw skills list 失败' };
+    }
+
+    const stdout = result.stdout || '';
+    if (!stdout.trim()) {
+      return { ok: false, error: 'openclaw skills list 返回为空' };
+    }
+
+    const data = JSON.parse(stdout);
+    const allSkills = data.skills || [];
+
+    // 只返回 bundled skills
+    const bundledSkills = allSkills.filter(s => s.bundled === true);
+
+    return { ok: true, skills: bundledSkills };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 });
