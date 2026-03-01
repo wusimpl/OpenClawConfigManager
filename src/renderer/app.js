@@ -1275,9 +1275,21 @@ function getGatewayActionText(action) {
   return action;
 }
 
-const GATEWAY_STATUS_INITIAL_DELAY_MS = 1000;
-const GATEWAY_STATUS_POLL_INTERVAL_MS = 1500;
+const GATEWAY_STATUS_INITIAL_DELAY_START_RESTART_MS = 30000;
+const GATEWAY_STATUS_INITIAL_DELAY_STOP_MS = 5000;
+const GATEWAY_STATUS_INITIAL_DELAY_DEFAULT_MS = 1000;
+const GATEWAY_STATUS_POLL_INTERVAL_MS = 3000;
 const GATEWAY_STATUS_POLL_MAX_ATTEMPTS = 7;
+
+function getGatewayStatusInitialDelayMs(action) {
+  if (action === 'start' || action === 'restart') {
+    return GATEWAY_STATUS_INITIAL_DELAY_START_RESTART_MS;
+  }
+  if (action === 'stop') {
+    return GATEWAY_STATUS_INITIAL_DELAY_STOP_MS;
+  }
+  return GATEWAY_STATUS_INITIAL_DELAY_DEFAULT_MS;
+}
 
 function getGatewayLogStatusText(status) {
   if (status === 'success') return '成功';
@@ -1460,11 +1472,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitGatewayStatus(expectRunning) {
+async function waitGatewayStatus(expectRunning, initialDelayMs) {
   let attempts = 0;
   let running = false;
 
-  await sleep(GATEWAY_STATUS_INITIAL_DELAY_MS);
+  await sleep(initialDelayMs);
   while (attempts < GATEWAY_STATUS_POLL_MAX_ATTEMPTS) {
     running = await refreshGatewayStatus();
     attempts += 1;
@@ -1499,6 +1511,8 @@ async function gatewayAction(action, btnId) {
 
   const actionText = getGatewayActionText(action);
   const expectRunning = action === 'start' || action === 'restart';
+  const initialDelayMs = getGatewayStatusInitialDelayMs(action);
+  const initialDelaySeconds = Math.round(initialDelayMs / 1000);
   const fallbackCommand = `openclaw gateway ${action}`;
 
   appendGatewayLog({
@@ -1534,11 +1548,11 @@ async function gatewayAction(action, btnId) {
     stdout: triggerRes.stdout,
     stderr: triggerRes.stderr,
     message: triggerRes.dispatched === false
-      ? `命令触发异常（将继续仅依据状态判定）`
-      : `命令已触发（将仅依据状态判定）`,
+      ? `命令触发异常（${initialDelaySeconds}s后开始状态检查，将继续仅依据状态判定）`
+      : `命令已触发（${initialDelaySeconds}s后开始状态检查，将仅依据状态判定）`,
   });
 
-  const statusResult = await waitGatewayStatus(expectRunning);
+  const statusResult = await waitGatewayStatus(expectRunning, initialDelayMs);
 
   btn.innerHTML = origHtml;
   btn.disabled = false;
