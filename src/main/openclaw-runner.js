@@ -1,7 +1,18 @@
-// openclaw 命令执行封装
+// openclaw 命令执行封装 —— 跨平台兼容（Windows/macOS/Linux）
 const { execFile, spawn } = require('child_process');
 const { toCommandString } = require('./utils');
-const { openclawPath, resolveNotes } = require('./resolve-openclaw');
+const { openclawPath, userPath, resolveNotes } = require('./resolve-openclaw');
+
+// 构建跨平台的子进程环境变量
+function buildChildEnv() {
+  const env = { ...process.env, PATH: userPath || process.env.PATH };
+  // npm_config_prefix 会干扰全局命令解析，移除它
+  delete env.npm_config_prefix;
+  return env;
+}
+
+// Windows 上 .cmd 文件需要通过 shell 执行
+const isWin32 = process.platform === 'win32';
 
 function runOpenclaw(args) {
   return new Promise((resolve) => {
@@ -9,8 +20,12 @@ function runOpenclaw(args) {
     const command = toCommandString(executable, args);
     const startedAt = Date.now();
 
-    execFile('bash', ['-c', `unset npm_config_prefix; export PATH="$HOME/.nvm/versions/node/v22.21.1/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"; ${command}`], {
+    execFile(executable, args, {
       timeout: 30000,
+      env: buildChildEnv(),
+      // Windows 上 .cmd 文件需要 shell 模式执行
+      shell: isWin32,
+      windowsHide: true,
     }, (err, stdout, stderr) => {
       const durationMs = Date.now() - startedAt;
       const stdoutText = stdout?.trim();
@@ -56,8 +71,12 @@ function runOpenclawDetached(args) {
     };
 
     try {
-      const child = spawn('bash', ['-c', `unset npm_config_prefix; export PATH="$HOME/.nvm/versions/node/v22.21.1/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"; ${command}`], {
+      const child = spawn(executable, args, {
         stdio: 'ignore',
+        detached: !isWin32, // Unix 上 detach 以脱离父进程；Windows 上不需要
+        env: buildChildEnv(),
+        shell: isWin32,
+        windowsHide: true,
       });
 
       child.once('error', (err) => {

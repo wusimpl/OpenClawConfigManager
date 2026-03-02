@@ -11,7 +11,8 @@ const homeDir = process.env.HOME || process.env.USERPROFILE || '';
 let loginShellPath = null;
 let loginOpenclawPath = null;
 
-if (process.platform === 'darwin') {
+// macOS 和 Linux 都需要从 login shell 探测 PATH（Windows 通过注册表管理 PATH，无需探测）
+if (process.platform !== 'win32') {
   loginShellPath = getLoginShellValue('echo $PATH');
   if (!loginShellPath) resolveNotes.push('无法从 login shell 读取 PATH');
   loginOpenclawPath = getLoginShellValue('command -v openclaw');

@@ -33,7 +33,19 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libgbm1 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libasound2 libpangocairo-1.0-0 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libcups2 libdrm2
+          # 兼容 Ubuntu 22.04 和 24.04 的包名差异（libasound2 在 24.04 上改名为 libasound2t64）
+          install_if_available() {
+            for pkg in "$@"; do
+              if apt-cache show "$pkg" > /dev/null 2>&1; then
+                echo "安装: $pkg"
+                sudo apt-get install -y "$pkg"
+                return
+              fi
+            done
+            echo "警告: 未找到可用包: $*"
+          }
+          sudo apt-get install -y libgtk-3-dev libgbm1 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libpangocairo-1.0-0 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libcups2 libdrm2
+          install_if_available libasound2 libasound2t64
 
       - name: Build application
         run: npm run build
