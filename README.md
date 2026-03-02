@@ -58,6 +58,18 @@ OpenClaw 的 Electron 桌面管理工具，提供可视化方式管理 `openclaw
 
 ![Tools 配置](images/tools.jpg)
 
+### 会话管理
+
+维护 `session`配置，包括 DM 隔离策略（`dmScope`）、会话重置模式与触发条件（`reset`）、维护策略（`maintenance`）等。支持查看各 Agent 实时会话状态。
+
+![会话管理](images/sessions.jpg)
+
+### 记忆管理
+
+维护 `memorySearch`、`memory`、`compaction.memoryFlush` 配置，包括嵌入向量提供者、混合搜索权重、MMR 去重、时间衰减、记忆刷写阈值等。
+
+![记忆管理](images/memory.jpg)
+
 ### Skills 管理
 
 查看 Bundled/全局/工作区/个人 Skills，支持 Bundled 白名单（`allowBundled`）、启用禁用、`apiKey/env` 配置。

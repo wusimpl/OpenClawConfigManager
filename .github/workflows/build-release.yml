@@ -4,9 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
   build:
@@ -29,7 +27,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Ubuntu 需要额外依赖来构建 Electron
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -41,24 +38,35 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts
+      - name: Upload artifacts (Windows)
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}
+          name: build-windows
+          path: dist/*.exe
+
+      - name: Upload artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-macos
+          path: dist/*.dmg
+
+      - name: Upload artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux
           path: |
-            dist/*.exe
-            dist/*.dmg
             dist/*.AppImage
             dist/*.snap
             dist/*.deb
             dist/*.rpm
-            dist/*.yml
-            dist/*.yaml
-          if-no-files-found: ignore
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
 
@@ -67,18 +75,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: build-*
           merge-multiple: true
 
       - name: List downloaded files
         run: ls -la artifacts/
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/**
-          draft: false
-          prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
