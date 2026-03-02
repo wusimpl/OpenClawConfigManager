@@ -26,12 +26,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          ELECTRON_MIRROR: "https://npmmirror.com/mirrors/electron/"
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkitgtk-4.0-dev
+          sudo apt-get install -y libgtk-3-dev libgbm1 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libasound2 libpangocairo-1.0-0 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libcups2 libdrm2
 
       - name: Build application
         run: npm run build
