@@ -1,5 +1,6 @@
 // 日志读取 IPC handlers
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const { ipcMain } = require('electron');
 const {
@@ -27,19 +28,33 @@ function extractLoggingFileFromRaw(raw) {
   return match[1].trim();
 }
 
-async function findLatestGatewayDailyLogFile() {
-  const logDir = path.join('/tmp', 'openclaw');
-  try {
-    const entries = await fs.promises.readdir(logDir, { withFileTypes: true });
-    const files = entries
-      .filter((entry) => entry.isFile() && /^openclaw-\d{4}-\d{2}-\d{2}\.log$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort();
-    if (files.length === 0) return null;
-    return path.join(logDir, files[files.length - 1]);
-  } catch {
-    return null;
+function getOpenClawTmpDirs() {
+  const dirs = [];
+  // OpenClaw 默认文件日志目录是 /tmp/openclaw（macOS 上 /tmp 与 os.tmpdir() 可能不同）
+  if (process.platform !== 'win32') {
+    dirs.push('/tmp/openclaw');
   }
+  dirs.push(path.join(os.tmpdir(), 'openclaw'));
+  return Array.from(new Set(dirs));
+}
+
+async function findLatestGatewayDailyLogFile() {
+  const matches = [];
+  for (const logDir of getOpenClawTmpDirs()) {
+    try {
+      const entries = await fs.promises.readdir(logDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!/^openclaw-\d{4}-\d{2}-\d{2}\.log$/.test(entry.name)) continue;
+        matches.push({ name: entry.name, path: path.join(logDir, entry.name) });
+      }
+    } catch {
+      // 忽略目录不存在/不可读
+    }
+  }
+
+  matches.sort((a, b) => a.name.localeCompare(b.name));
+  return matches.length ? matches[matches.length - 1].path : null;
 }
 
 async function resolveGatewayFileLogPath() {
@@ -63,14 +78,20 @@ async function resolveGatewayFileLogPath() {
     return path.resolve(resolveHomePath(configuredPath));
   }
 
-  const todayPath = path.join('/tmp', 'openclaw', `openclaw-${formatDateStamp()}.log`);
-  try {
-    await fs.promises.access(todayPath);
-    return todayPath;
-  } catch {
-    const latestPath = await findLatestGatewayDailyLogFile();
-    return latestPath || todayPath;
+  const stamp = formatDateStamp();
+  const todayCandidates = getOpenClawTmpDirs().map((dir) => path.join(dir, `openclaw-${stamp}.log`));
+
+  for (const todayPath of todayCandidates) {
+    try {
+      await fs.promises.access(todayPath);
+      return todayPath;
+    } catch {
+      // 继续尝试下一候选
+    }
   }
+
+  const latestPath = await findLatestGatewayDailyLogFile();
+  return latestPath || todayCandidates[0];
 }
 
 async function resolveLogSourcePath(source) {

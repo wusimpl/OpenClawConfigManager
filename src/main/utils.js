@@ -1,14 +1,25 @@
 // 通用工具函数和常量
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawnSync } = require('child_process');
 
 // ── 路径与配置常量 ──
 
-const CONFIG_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'openclaw.json');
+// 参考 OpenClaw 官方路径语义：
+// - OPENCLAW_HOME: 覆盖 home（影响 ~ 展开）
+// - OPENCLAW_STATE_DIR: 覆盖 state dir（默认 ~/.openclaw，并兼容历史目录）
+// - OPENCLAW_CONFIG_PATH: 覆盖配置文件路径（默认 <stateDir>/openclaw.json，并优先使用已存在的候选）
+const STATE_DIRNAME = '.openclaw';
+const LEGACY_STATE_DIRNAMES = ['.clawdbot', '.moldbot', '.moltbot'];
+const CONFIG_FILENAME = 'openclaw.json';
+const LEGACY_CONFIG_FILENAMES = ['clawdbot.json', 'moldbot.json', 'moltbot.json'];
+
+const STATE_DIR = resolveStateDirPath();
+const CONFIG_PATH = resolveConfigPathCandidate();
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_FILE_NAME = path.basename(CONFIG_PATH);
-const PREFS_PATH = path.join(process.env.USERPROFILE || process.env.HOME, '.openclaw', 'ui-prefs.json');
+const PREFS_PATH = path.join(STATE_DIR, 'ui-prefs.json');
 
 // ── 日志常量 ──
 
@@ -42,7 +53,31 @@ function splitPathEntries(pathValue) {
   return (pathValue || '').split(path.delimiter).map((value) => value.trim()).filter(Boolean);
 }
 
+function getSystemHomeDir() {
+  const envHome = process.env.HOME || process.env.USERPROFILE;
+  if (typeof envHome === 'string' && envHome.trim()) return envHome.trim();
+  try {
+    return os.homedir();
+  } catch {
+    return '';
+  }
+}
+
+function getOpenClawHomeDir() {
+  const systemHome = getSystemHomeDir();
+  const overrideRaw = typeof process.env.OPENCLAW_HOME === 'string' ? process.env.OPENCLAW_HOME.trim() : '';
+  if (!overrideRaw) return systemHome;
+  if (!systemHome) return path.resolve(overrideRaw.replace(/^~[\\/]/, ''));
+  if (overrideRaw === '~') return systemHome;
+  if (overrideRaw.startsWith('~/') || overrideRaw.startsWith('~\\')) {
+    return path.resolve(path.join(systemHome, overrideRaw.slice(2)));
+  }
+  return path.resolve(overrideRaw);
+}
+
 function getLoginShellValue(command) {
+  // Windows 没有 login shell 概念，直接返回 null
+  if (process.platform === 'win32') return null;
   const shell = process.env.SHELL || '/bin/zsh';
   const res = spawnSync(shell, ['-ilc', command], { timeout: 10000, encoding: 'utf-8' });
   if (res.error || res.status !== 0) return null;
@@ -94,13 +129,79 @@ function resolveHomePath(inputPath) {
   if (typeof inputPath !== 'string') return '';
   const trimmed = inputPath.trim();
   if (!trimmed) return '';
-  const userHome = process.env.HOME || process.env.USERPROFILE || '';
+  const userHome = getOpenClawHomeDir();
   if (!userHome) return trimmed;
   if (trimmed === '~') return userHome;
   if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
     return path.join(userHome, trimmed.slice(2));
   }
   return trimmed;
+}
+
+function resolveStateDirPath() {
+  const overrideRaw = (process.env.OPENCLAW_STATE_DIR || process.env.CLAWDBOT_STATE_DIR || '').trim();
+  if (overrideRaw) {
+    return path.resolve(resolveHomePath(overrideRaw));
+  }
+
+  const homeDir = getOpenClawHomeDir();
+  const newDir = path.join(homeDir, STATE_DIRNAME);
+  try {
+    if (fs.existsSync(newDir)) return newDir;
+  } catch {}
+
+  for (const legacyDirName of LEGACY_STATE_DIRNAMES) {
+    const legacyDir = path.join(homeDir, legacyDirName);
+    try {
+      if (fs.existsSync(legacyDir)) return legacyDir;
+    } catch {}
+  }
+
+  return newDir;
+}
+
+function resolveDefaultConfigCandidates() {
+  const candidates = [];
+
+  const explicitConfig = (process.env.OPENCLAW_CONFIG_PATH || process.env.CLAWDBOT_CONFIG_PATH || '').trim();
+  if (explicitConfig) {
+    candidates.push(path.resolve(resolveHomePath(explicitConfig)));
+  }
+
+  const stateOverride = (process.env.OPENCLAW_STATE_DIR || process.env.CLAWDBOT_STATE_DIR || '').trim();
+  if (stateOverride) {
+    const resolvedState = path.resolve(resolveHomePath(stateOverride));
+    candidates.push(path.join(resolvedState, CONFIG_FILENAME));
+    candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(resolvedState, name)));
+  }
+
+  const homeDir = getOpenClawHomeDir();
+  const defaultStateDirs = [
+    path.join(homeDir, STATE_DIRNAME),
+    ...LEGACY_STATE_DIRNAMES.map((name) => path.join(homeDir, name)),
+  ];
+  for (const dir of defaultStateDirs) {
+    candidates.push(path.join(dir, CONFIG_FILENAME));
+    candidates.push(...LEGACY_CONFIG_FILENAMES.map((name) => path.join(dir, name)));
+  }
+
+  return uniqueStrings(candidates.map((p) => (typeof p === 'string' ? p.trim() : '')).filter(Boolean));
+}
+
+function resolveConfigPathCandidate() {
+  const candidates = resolveDefaultConfigCandidates();
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {}
+  }
+
+  const explicitConfig = (process.env.OPENCLAW_CONFIG_PATH || process.env.CLAWDBOT_CONFIG_PATH || '').trim();
+  if (explicitConfig) {
+    return path.resolve(resolveHomePath(explicitConfig));
+  }
+
+  return path.join(resolveStateDirPath(), CONFIG_FILENAME);
 }
 
 function formatDateStamp(date = new Date()) {
@@ -145,7 +246,7 @@ function normalizeWorkspacePath(workspacePath) {
   const trimmed = workspacePath.trim();
   if (!trimmed) return null;
 
-  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const homeDir = getOpenClawHomeDir();
   if (homeDir && trimmed === '~') {
     return path.resolve(homeDir);
   }
@@ -178,9 +279,7 @@ async function copyPathIfExists(sourcePath, targetPath) {
 }
 
 function getStateDirPath() {
-  const envState = resolveHomePath(process.env.OPENCLAW_STATE_DIR || '');
-  if (envState) return path.resolve(envState);
-  return CONFIG_DIR;
+  return STATE_DIR;
 }
 
 async function readUtf8Slice(filePath, start, length) {
